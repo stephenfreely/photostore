@@ -1,0 +1,6 @@
+.serverless
+.idea
+node_modules
+.env
+.env.*
+*.log

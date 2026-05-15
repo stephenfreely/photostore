@@ -1,0 +1,14 @@
+# Minimal starter — safe to extend later (Lambda, DynamoDB, etc.)
+# Uses Serverless v3 from package.json so `npx serverless print` works without a Serverless.com login (v4 requires login).
+service: photostore-learn
+
+frameworkVersion: "3"
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1
+
+functions:
+  hello:
+    handler: handler.hello

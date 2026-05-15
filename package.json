@@ -1,0 +1,13 @@
+{
+  "name": "photostore-learn",
+  "private": true,
+  "scripts": {
+    "print": "serverless print",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.5.0",
+    "serverless": "^3.40.0"
+  }
+}

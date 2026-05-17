@@ -117,6 +117,7 @@ Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serv
 | Serverless Framework             | [Below](#serverless-framework)           |
 | Deploy, CloudFormation & cleanup | [Below](#deploy-cloudformation--cleanup) |
 | API Gateway & HTTP               | [Below](#api-gateway--http)              |
+| CloudWatch (debugging endpoints) | [Below](#cloudwatch-debugging-endpoints) |
 | CORS                             | [Below](#cors)                           |
 | S3, DynamoDB & CloudFront        | [Below](#s3-dynamodb--cloudfront)        |
 
@@ -309,6 +310,88 @@ Other common fields: `headers`, `body`, `pathParameters`, `cookies`, `requestCon
 | Cheaper for many use cases   | More features (API keys, caching) |
 | Payload v2.0 `event`         | Different v1.0 `event` shape      |
 | Simpler config in Serverless | More verbose integrations         |
+
+### CloudWatch (debugging endpoints) {#cloudwatch-debugging-endpoints}
+
+With this stack (**HTTP API → Lambda**), **CloudWatch Logs** is the main way to debug deployed endpoints after you call `GET /hello` (or any route you add later).
+
+**What gets logged automatically**
+
+| Source | What you see | This repo |
+| ------ | ------------ | --------- |
+| **Lambda** | `console.log` / `console.error`, uncaught errors, timeouts, runtime start/end | On by default for every invocation |
+| **API Gateway** | Access logs, execution logs (requests that never reach Lambda, integration errors) | Off unless you configure them in `serverless.yml` |
+
+Most endpoint issues show up in **Lambda logs**. Turn on API Gateway logging only if you need to debug routing, CORS, or auth **before** the function runs.
+
+**Log group name**
+
+After deploy, Lambda writes to a log group shaped like:
+
+```text
+/aws/lambda/{service}-{stage}-{functionKey}
+→ /aws/lambda/photostore-learn-dev-hello
+```
+
+(`service` and `stage` come from `serverless.yml`; `functionKey` is `hello` under `functions`.)
+
+**Where to look**
+
+1. **AWS Console:** CloudWatch → **Log groups** → open `photostore-learn-dev-hello` → pick the latest **log stream** after a request.
+2. **Terminal (tail):**
+
+```bash
+npx serverless logs -f hello -t
+```
+
+(`-t` follows new lines; requires a prior `npx serverless deploy`.)
+
+3. **AWS CLI:**
+
+```bash
+aws logs tail "/aws/lambda/photostore-learn-dev-hello" --follow
+```
+
+**Debugging workflow**
+
+1. Deploy (`npx serverless deploy`).
+2. Hit the endpoint (browser, Postman, or `curl` using the HTTP API URL from deploy output).
+3. Open the Lambda log group or run `npx serverless logs -f hello -t`.
+4. Check:
+   - **No log line** → wrong URL/stage, or deploy did not update the function you think it did.
+   - **Error stack / `Task timed out`** → exception or timeout in `src/handler.ts`.
+   - **Your `console.log` output** → path, query string, custom fields you added.
+
+**Add logging in the handler**
+
+Anything you log from `src/handler.ts` appears in CloudWatch. Example:
+
+```ts
+console.log("hello request", {
+  routeKey: event.routeKey,
+  path: event.rawPath,
+  query: event.queryStringParameters,
+});
+```
+
+Redeploy after changing the handler so logs reflect the new code.
+
+**Search many requests (Logs Insights)**
+
+In the console: CloudWatch → **Logs Insights** → select the `photostore-learn-dev-hello` log group. Example query:
+
+```sql
+fields @timestamp, @message
+| filter @message like /error/i
+| sort @timestamp desc
+| limit 50
+```
+
+**Tips**
+
+- **Source maps:** `custom.esbuild.sourcemap: true` in `serverless.yml` helps stack traces map back to TypeScript.
+- **Structured logs:** `console.log(JSON.stringify({ level: "info", ... }))` makes Insights filters easier than plain strings.
+- **Local vs deployed:** fix syntax and small bugs locally first; use CloudWatch for behavior that only appears in AWS (IAM, env vars, real API Gateway events).
 
 ### CORS {#cors}
 

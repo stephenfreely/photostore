@@ -2,12 +2,19 @@
   "name": "photostore-learn",
   "private": true,
   "scripts": {
+    "build": "serverless package",
     "print": "serverless print",
+    "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "@types/aws-lambda": "^8.10.161",
+    "@types/node": "^25.8.0",
+    "esbuild": "^0.28.0",
     "prettier": "^3.5.0",
-    "serverless": "^3.40.0"
+    "serverless": "^3.40.0",
+    "serverless-esbuild": "^1.57.1",
+    "typescript": "^6.0.3"
   }
 }

@@ -1,5 +1,12 @@
+import type {
+  APIGatewayProxyEventV2,
+  APIGatewayProxyStructuredResultV2,
+} from "aws-lambda";
+
 /** HTTP API (payload v2) — return a few event fields so you can see what API Gateway sends. */
-exports.hello = async (event) => ({
+export const hello = async (
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyStructuredResultV2> => ({
   statusCode: 200,
   headers: { "content-type": "application/json" },
   body: JSON.stringify({

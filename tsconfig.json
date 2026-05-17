@@ -10,7 +10,8 @@
     "moduleResolution": "node16",
     "resolveJsonModule": true,
     "noEmit": true,
-    "rootDir": "src"
+    "rootDir": "src",
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"]
 }

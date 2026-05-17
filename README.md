@@ -30,8 +30,9 @@ curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello"
 
 - **Service:** `photostore-learn` (see `serverless.yml`)
 - **Stage:** `dev` (default)
-- **Lambda:** `hello` → deployed name `photostore-learn-dev-hello`
-- **API:** HTTP API, **`GET /hello`**, CORS enabled for future browser clients
+- **Lambdas:** `hello`, `createPhoto`, `listPhotos` (TypeScript in `src/`, bundled with esbuild)
+- **API:** HTTP API — **`GET /hello`**, **`POST /photos`**, **`GET /photos`**, CORS enabled
+- **DynamoDB:** `photostore-learn-dev-photos` table (`photoId` partition key); see [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml)
 
 ---
 
@@ -108,18 +109,19 @@ Use **`npx serverless remove`** when an experiment is done so you do not leave L
 
 ## Stack reference
 
-Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serverless.yml` and `handler.js` as they exist today, plus what the [learning path](#learning-path-recommended-order) adds later.
+Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serverless.yml` and `src/` as they exist today, plus what the [learning path](#learning-path-recommended-order) adds later.
 
-| Topic                            | Section                                  |
-| -------------------------------- | ---------------------------------------- |
-| AWS account & billing            | [Below](#aws-account--billing)           |
-| IAM & deploy permissions         | [Below](#iam--deploy-permissions)        |
-| Serverless Framework             | [Below](#serverless-framework)           |
-| Deploy, CloudFormation & cleanup | [Below](#deploy-cloudformation--cleanup) |
-| API Gateway & HTTP               | [Below](#api-gateway--http)              |
-| CloudWatch (debugging endpoints) | [Below](#cloudwatch-debugging-endpoints) |
-| CORS                             | [Below](#cors)                           |
-| S3, DynamoDB & CloudFront        | [Below](#s3-dynamodb--cloudfront)        |
+| Topic                               | Section                                    |
+| ----------------------------------- | ------------------------------------------ |
+| AWS account & billing               | [Below](#aws-account--billing)             |
+| IAM & deploy permissions            | [Below](#iam--deploy-permissions)          |
+| Serverless Framework                | [Below](#serverless-framework)             |
+| Deploy, CloudFormation & cleanup    | [Below](#deploy-cloudformation--cleanup)   |
+| API Gateway & HTTP                  | [Below](#api-gateway--http)                |
+| DynamoDB wiring in `serverless.yml` | [Below](#dynamodb-wiring-in-serverlessyml) |
+| CloudWatch (debugging endpoints)    | [Below](#cloudwatch-debugging-endpoints)   |
+| CORS                                | [Below](#cors)                             |
+| S3, DynamoDB & CloudFront           | [Below](#s3-dynamodb--cloudfront)          |
 
 ### AWS account & billing {#aws-account--billing}
 
@@ -311,15 +313,82 @@ Other common fields: `headers`, `body`, `pathParameters`, `cookies`, `requestCon
 | Payload v2.0 `event`         | Different v1.0 `event` shape      |
 | Simpler config in Serverless | More verbose integrations         |
 
+### DynamoDB wiring in `serverless.yml` {#dynamodb-wiring-in-serverlessyml}
+
+This block connects Lambdas to **PhotosTable** (defined under `resources` in the same file). It does two jobs: tell functions **which table name to use**, and tell AWS **which DynamoDB actions the Lambda execution role may perform**.
+
+```yaml
+environment:
+  PHOTOS_TABLE: !Ref PhotosTable
+iam:
+  role:
+    statements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+          - dynamodb:Scan
+        Resource: !GetAtt PhotosTable.Arn
+```
+
+**`environment` — table name at runtime**
+
+| Piece              | Meaning                                                                                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `PHOTOS_TABLE`     | Environment variable injected into **every** function in this service (`hello`, `createPhoto`, `listPhotos`).                            |
+| `!Ref PhotosTable` | CloudFormation intrinsic: resolves to the **table name** string (e.g. `photostore-learn-dev-photos` from `TableName` under `resources`). |
+
+In code, `src/dynamo.ts` reads it:
+
+```ts
+process.env.PHOTOS_TABLE; // → "photostore-learn-dev-photos"
+```
+
+`createPhoto` and `listPhotos` pass that name to `PutCommand` / `ScanCommand`. Hard-coding the table name in TypeScript would break when stage or service name changes; `!Ref` keeps the name in one place in `serverless.yml`.
+
+**`iam.role.statements` — what Lambda is allowed to do**
+
+This is **not** your personal IAM user. It augments the **Lambda execution role** CloudFormation creates for functions in this stack.
+
+| Piece                               | Meaning                                                                                                                                                         |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Effect: Allow`                     | Permit these actions (everything else on DynamoDB is denied by default).                                                                                        |
+| `Action`                            | Only **`PutItem`**, **`GetItem`**, and **`Scan`**—no `DeleteTable`, `CreateTable`, or `dynamodb:*`.                                                             |
+| `Resource: !GetAtt PhotosTable.Arn` | Permissions apply **only** to this table’s ARN (e.g. `arn:aws:dynamodb:us-east-1:123456789:table/photostore-learn-dev-photos`), not every table in the account. |
+
+**How this maps to the API**
+
+| Route          | Handler       | DynamoDB API used | IAM action required |
+| -------------- | ------------- | ----------------- | ------------------- |
+| `POST /photos` | `createPhoto` | `PutItem`         | `dynamodb:PutItem`  |
+| `GET /photos`  | `listPhotos`  | `Scan`            | `dynamodb:Scan`     |
+
+`GetItem` is allowed now for a future “get one photo by id” route; nothing calls it yet.
+
+**End-to-end (`POST /photos`)**
+
+```text
+Client → API Gateway → Lambda (createPhoto)
+  → reads process.env.PHOTOS_TABLE
+  → AWS SDK PutItem (signed with the function’s execution role)
+  → DynamoDB PhotosTable
+```
+
+If IAM were too broad (e.g. `dynamodb:*` on `*`), a bug or compromise in Lambda could touch every table in the account. Scoping to **one ARN** and **three actions** is least privilege for the current app.
+
+**Table definition (same file, `resources`)**
+
+`PhotosTable` is **pay-per-request** with partition key **`photoId`** (string). That matches items in `src/photos.ts` (`photoId`, `s3Key`, `caption`, `createdAt`).
+
 ### CloudWatch (debugging endpoints) {#cloudwatch-debugging-endpoints}
 
 With this stack (**HTTP API → Lambda**), **CloudWatch Logs** is the main way to debug deployed endpoints after you call `GET /hello` (or any route you add later).
 
 **What gets logged automatically**
 
-| Source | What you see | This repo |
-| ------ | ------------ | --------- |
-| **Lambda** | `console.log` / `console.error`, uncaught errors, timeouts, runtime start/end | On by default for every invocation |
+| Source          | What you see                                                                       | This repo                                         |
+| --------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------- |
+| **Lambda**      | `console.log` / `console.error`, uncaught errors, timeouts, runtime start/end      | On by default for every invocation                |
 | **API Gateway** | Access logs, execution logs (requests that never reach Lambda, integration errors) | Off unless you configure them in `serverless.yml` |
 
 Most endpoint issues show up in **Lambda logs**. Turn on API Gateway logging only if you need to debug routing, CORS, or auth **before** the function runs.
@@ -452,11 +521,11 @@ API Gateway has a **~10 MB** payload limit; direct-to-S3 upload avoids that and 
 - **SSE-S3** or **SSE-KMS** for encryption at rest.
 - Key pattern: `users/{ownerId}/photos/{photoId}.jpg` for easy IAM scoping later.
 
-**DynamoDB (when you add it)**
+**DynamoDB (implemented)**
 
-- Start with partition key `photoId` (string); add GSI on `ownerId` when Cognito `sub` is in play.
-- Grant Lambda only `PutItem`, `GetItem`, `Query`/`Scan` on that table’s ARN.
-- Pass table name via `provider.environment.PHOTOS_TABLE` from `!Ref` in `resources`.
+- Table: `photostore-learn-dev-photos`, key **`photoId`** (string). Metadata routes: **`POST /photos`**, **`GET /photos`**.
+- Wiring: [DynamoDB in `serverless.yml`](#dynamodb-wiring-in-serverlessyml) (`PHOTOS_TABLE` env + IAM on table ARN).
+- Later: GSI on `ownerId` when Cognito `sub` is in play; replace `Scan` with `Query` for “my photos only.”
 
 **CloudFront—when to add it**
 

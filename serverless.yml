@@ -22,6 +22,17 @@ provider:
   region: us-east-1
   httpApi:
     cors: true
+  environment:
+    PHOTOS_TABLE: !Ref PhotosTable
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:Scan
+          Resource: !GetAtt PhotosTable.Arn
 
 functions:
   hello:
@@ -30,3 +41,31 @@ functions:
       - httpApi:
           path: /hello
           method: GET
+
+  createPhoto:
+    handler: src/photos.create
+    events:
+      - httpApi:
+          path: /photos
+          method: POST
+
+  listPhotos:
+    handler: src/photos.list
+    events:
+      - httpApi:
+          path: /photos
+          method: GET
+
+resources:
+  Resources:
+    PhotosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${sls:stage}-photos
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: photoId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: photoId
+            KeyType: HASH

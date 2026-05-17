@@ -108,7 +108,7 @@ Use **`npx serverless remove`** when an experiment is done so you do not leave L
 
 ## Stack reference
 
-Notes on **AWS** and this project’s stack (Lambda, API Gateway, Serverless, S3, DynamoDB, CloudFront).
+Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serverless.yml` and `handler.js` as they exist today, plus what the [learning path](#learning-path-recommended-order) adds later.
 
 | Topic                            | Section                                  |
 | -------------------------------- | ---------------------------------------- |
@@ -122,40 +122,276 @@ Notes on **AWS** and this project’s stack (Lambda, API Gateway, Serverless, S3
 
 ### AWS account & billing {#aws-account--billing}
 
-- **Free tier:** New accounts get **AWS Free Tier** (12‑month and always‑free caps on selected services). Billing is still **pay‑as‑you‑go** outside those caps; a payment method is usually required.
-- **Cost control:** Use billing alerts/budgets and run **`npx serverless remove`** when an experiment is finished.
+**How AWS charges**
+
+- There is no flat “AWS subscription.” You pay per service, per region, per usage (requests, storage, duration).
+- A **payment method** is required on the account even when you stay inside free tier.
+
+**Free tier (examples relevant to this project)**
+
+| Service     | Typical free-tier idea (check current AWS docs for exact caps) |
+| ----------- | -------------------------------------------------------------- |
+| Lambda      | Monthly free requests + compute time                           |
+| API Gateway | HTTP API request count cap                                     |
+| DynamoDB    | On-demand / provisioned capacity within free allowance         |
+| S3          | Storage + requests within small monthly limits                 |
+| CloudFront  | Often limited free data transfer for 12 months                 |
+
+Caps change; always confirm in the [AWS Free Tier](https://aws.amazon.com/free/) page. Leaving a stack deployed 24/7 can still incur cost once you exceed caps.
+
+**Cost control habits**
+
+- Deploy to **one region** (`us-east-1` in this repo) while learning.
+- Run **`npx serverless remove`** when you finish a session so Lambda, API Gateway, and IAM roles from this service are torn down.
+- Set a **billing budget + email alert** in the AWS console (Billing → Budgets).
 
 ### IAM & deploy permissions {#iam--deploy-permissions}
 
-- Day-to-day work should use an **IAM user** or **role**, not the **root** user.
-- Deploying this stack requires permission to manage **CloudFormation**, **Lambda**, **API Gateway**, **DynamoDB**, **S3**, and **IAM roles for Lambda**. **`PowerUserAccess` alone is often insufficient** because it restricts IAM role management.
-- **`AdministratorAccess`** is common for personal learning accounts; production or shared org accounts should use a **sandbox** or a **scoped deploy policy**.
+**Who should call AWS**
+
+| Identity             | Use for                                                                             |
+| -------------------- | ----------------------------------------------------------------------------------- |
+| **Root user**        | Account recovery, billing, enabling MFA—avoid daily deploys                         |
+| **IAM user / role**  | CLI (`aws configure`), Serverless deploys, console work                             |
+| **Lambda exec role** | What the **function** may do at runtime (e.g. read a DynamoDB table)—not your login |
+
+**What `serverless deploy` needs (your IAM user/role)**
+
+Serverless drives **CloudFormation**. Your deploy principal must be allowed to create/update at least:
+
+- `cloudformation:*` (stack create/update/delete for this app)
+- `lambda:*` (function code and configuration)
+- `apigateway:*` or HTTP API–scoped actions (routes, integrations)
+- `iam:CreateRole`, `iam:AttachRolePolicy`, `iam:PassRole` (Lambda **execution** role)
+- Later steps: `dynamodb:*` (table), `s3:*` (bucket), `cognito-idp:*` (user pool)
+
+**`PowerUserAccess` vs `AdministratorAccess`**
+
+- **`PowerUserAccess`:** can use most services but **cannot** manage IAM fully. Often **blocks** Serverless when it must create the Lambda execution role.
+- **`AdministratorAccess`:** broad; fine for a personal sandbox, too wide for production.
+- **Better for teams:** dedicated **sandbox account** or a **custom policy** listing only the actions above for one region.
+
+**Lambda execution role (runtime)**
+
+Separate from your login. When you add DynamoDB/S3 in `serverless.yml`, you grant **only that role** `dynamodb:PutItem` on **one table ARN**, not admin on the whole account. That is **least privilege** at runtime.
 
 ### Serverless Framework {#serverless-framework}
 
-- This repo pins **Serverless v3** in `package.json`. Use **`npx serverless`** or **`npm run print`** so commands do not pick up a global **v4** install (v4 may require a Serverless.com login).
+**This repo**
+
+- `frameworkVersion: "3"` and `serverless` in `devDependencies` → use **`npx serverless deploy`**, not bare `serverless` from PATH.
+- **`npm run print`** expands `serverless.yml` to the final CloudFormation-oriented config (good sanity check before deploy).
+
+**v3 vs global v4**
+
+|                         | Project-local v3 (`npx serverless`) | Global v4 (`serverless` on PATH) |
+| ----------------------- | ----------------------------------- | -------------------------------- |
+| Login to Serverless.com | Not required for `print` / deploy   | Often required                   |
+| Config in this repo     | `frameworkVersion: "3"`             | Ignored if you run global CLI    |
+
+**Key files**
+
+| File             | Role                                                               |
+| ---------------- | ------------------------------------------------------------------ |
+| `serverless.yml` | Service name, region, functions, events, future `resources` block  |
+| `handler.js`     | Lambda entry (`handler.hello` → file `handler.js`, export `hello`) |
+| `.serverless/`   | Generated artifacts after deploy (gitignored)                      |
 
 ### Deploy, CloudFormation & cleanup {#deploy-cloudformation--cleanup}
 
-- **`serverless deploy`** creates/updates a **CloudFormation stack** (Lambda, IAM execution role, HTTP API, etc.).
-- **Lambda naming:** deployed name = **`{service}-{stage}-{functionKey}`** (e.g. `photostore-learn` + `dev` + `hello` → `photostore-learn-dev-hello`). That string is not hard-coded in the repo.
-- **Deploy output** lists each function with its AWS name and package size (e.g. `156 kB`).
-- **`serverless remove`** deletes the stack and its AWS resources. **Local source code is not deleted.** A later **`deploy`** publishes whatever is in the project at that time.
+**What happens on `npx serverless deploy`**
+
+1. Serverless packages `handler.js` (and dependencies when you add them).
+2. Uploads the zip to an S3 bucket AWS uses for deployments (managed by the framework).
+3. Creates or updates a **CloudFormation stack** named like `photostore-learn-dev`.
+4. CloudFormation creates/updates resources defined by the framework: today that is mainly **Lambda**, **IAM role**, **CloudWatch log group**, **HTTP API**, and the **route → Lambda integration**.
+
+**Lambda name rule**
+
+```
+{service}-{stage}-{functionKey}
+photostore-learn + dev + hello → photostore-learn-dev-hello
+```
+
+Defined in config by `service: photostore-learn`, default `stage: dev`, and `functions.hello`—not a string in `handler.js`.
+
+**Deploy output**
+
+A line like `hello: photostore-learn-dev-hello (156 kB)` means: function key `hello`, AWS name `photostore-learn-dev-hello`, zip size `156 kB`. You should also see an **HTTP API endpoint** URL for `GET /hello`.
+
+**`npx serverless remove`**
+
+- Deletes the **CloudFormation stack** and resources it owns (this service’s Lambda, API, role, etc.).
+- Does **not** delete your laptop repo or uncommitted edits.
+- Does **not** remove resources you created manually in the console outside this stack.
+- After remove, `deploy` again creates a **new** stack; the API hostname may change.
+
+**`deploy` vs local code**
+
+| Location | `remove` effect              | `deploy` effect                                    |
+| -------- | ---------------------------- | -------------------------------------------------- |
+| AWS      | Stack gone until next deploy | Publishes current `handler.js` / `serverless.yml`  |
+| Your Mac | No change to files           | No change to files until you edit and deploy again |
 
 ### API Gateway & HTTP {#api-gateway--http}
 
-- **`functions.hello` + `httpApi`:** defines Lambda `hello` (`handler.hello` in `handler.js`) and exposes **`GET /hello`** on an **HTTP API** (v2). **`provider.httpApi.cors`** enables CORS for browser clients.
-- **Request flow:** client → **HTTP API** → **Lambda** → handler returns `{ statusCode, headers, body }` → API Gateway → client.
-- **Lambda `event`:** HTTP API **payload format 2.0** (`routeKey`, `rawPath`, `queryStringParameters`, `requestContext.http`, etc.). See [AWS HTTP API Lambda proxy](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-lambda.html).
-- **Invoke URL:** `https://<api-id>.execute-api.<region>.amazonaws.com` plus route path (e.g. `/hello`). Printed by **`deploy`** / **`serverless info`** or in the API Gateway console.
+**What this project uses**
+
+- **HTTP API** (API Gateway v2)—lower cost and simpler than the older **REST API** for Lambda proxy use cases.
+- Config in `serverless.yml`:
+
+```yaml
+provider:
+  httpApi:
+    cors: true
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - httpApi:
+          path: /hello
+          method: GET
+```
+
+Only **GET** `/hello` invokes `hello`. Other paths/methods return 404 unless you add more `events`.
+
+**End-to-end request flow**
+
+```text
+Client (curl, browser, app)
+  → HTTPS GET https://<api-id>.execute-api.us-east-1.amazonaws.com/hello
+  → API Gateway HTTP API (TLS termination, route match)
+  → Lambda Invoke (photostore-learn-dev-hello)
+  → handler.hello(event) runs in Node 20
+  → returns { statusCode, headers, body }
+  → API Gateway maps that to HTTP response
+  → Client receives JSON
+```
+
+**Handler contract (proxy integration)**
+
+Lambda does not write to the socket directly. It must return:
+
+```js
+{
+  statusCode: 200,
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ ... }),  // string, not a raw object
+}
+```
+
+`handler.js` also echoes parts of `event` so you can see what API Gateway passed in.
+
+**HTTP API event (payload format 2.0)—fields used in this repo**
+
+| Field                          | Example / meaning             |
+| ------------------------------ | ----------------------------- |
+| `routeKey`                     | `"GET /hello"`                |
+| `rawPath`                      | `"/hello"`                    |
+| `rawQueryString`               | `"foo=bar"` or `""`           |
+| `queryStringParameters`        | `{ "foo": "bar" }` or `null`  |
+| `requestContext.http.method`   | `"GET"`                       |
+| `requestContext.http.sourceIp` | Client IP seen by API Gateway |
+
+Other common fields: `headers`, `body`, `pathParameters`, `cookies`, `requestContext.accountId`, `requestContext.apiId`. Full spec: [HTTP API Lambda proxy](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-lambda.html).
+
+**Invoke URL**
+
+- Shape: `https://<api-id>.execute-api.<region>.amazonaws.com/<path>`
+- `<api-id>` is assigned by AWS (e.g. `hmffn49117`); it is not in source code.
+- Find it: deploy output, `npx serverless info`, or **API Gateway → APIs → Routes → Invoke URL**.
+- Example: `curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello?foo=bar"`
+
+**HTTP API vs REST API (why it matters)**
+
+| HTTP API (this repo)         | REST API (older)                  |
+| ---------------------------- | --------------------------------- |
+| Cheaper for many use cases   | More features (API keys, caching) |
+| Payload v2.0 `event`         | Different v1.0 `event` shape      |
+| Simpler config in Serverless | More verbose integrations         |
 
 ### CORS {#cors}
 
-- **Same origin** = same scheme, host, and port. Cross-origin browser `fetch` may send an **OPTIONS** preflight before **GET**/**POST**; `httpApi.cors: true` lets API Gateway answer preflight for allowed origins.
+**Same origin**
+
+Two URLs share an origin when **scheme + host + port** all match:
+
+| Page                      | API                             | Same origin? |
+| ------------------------- | ------------------------------- | ------------ |
+| `https://api.example.com` | `https://api.example.com/hello` | Yes          |
+| `https://app.example.com` | `https://api.example.com/hello` | No (host)    |
+| `http://api.example.com`  | `https://api.example.com/hello` | No (scheme)  |
+
+**Why `httpApi.cors: true`**
+
+Browser JavaScript from another origin (e.g. a future React app on `localhost:5173`) cannot read API responses unless the API returns CORS headers. With CORS enabled, API Gateway can respond to **OPTIONS** preflight and attach `Access-Control-Allow-*` on the real **GET**.
+
+**Typical sequences**
+
+- **curl / Postman:** no CORS (not a browser enforcing origin).
+- **Browser on same host as API:** often simple GET without preflight.
+- **Browser SPA on different host:** `OPTIONS` → then `GET` with CORS headers.
 
 ### S3, DynamoDB & CloudFront {#s3-dynamodb--cloudfront}
 
-- **Photos:** store bytes in **S3**; store **metadata** in **DynamoDB** (`s3Key`, caption, later `ownerId`). Typical pattern: private bucket, **presigned PUT** upload, row in DynamoDB, **presigned GET** (or CloudFront later) for viewing.
-- **CloudFront** is optional (learning path step 9): not required for the core app. Add it for edge caching, custom domains, and serving private S3 via **OAC** + signed URLs.
-- **S3 → CloudFront later:** straightforward if DynamoDB stores **`s3Key`** (not long-lived S3 URLs) and view URLs are built in one place. Objects stay in the same bucket.
-- **CloudFront fits:** global caching, origin offload, HTTPS/custom domain, private S3 origins, multi-origin routing, cache TTLs/invalidation, large downloads/streaming.
+**Planned data model (photo app)**
+
+| Store        | Holds                                                               | Why                                         |
+| ------------ | ------------------------------------------------------------------- | ------------------------------------------- |
+| **S3**       | JPEG/PNG bytes                                                      | Cheap, durable object storage for files     |
+| **DynamoDB** | `photoId`, `s3Key`, `caption`, `createdAt`, later `ownerId` (`sub`) | Query “my photos,” list by user, small rows |
+| **Lambda**   | Upload URL minting, metadata writes, auth checks                    | Short-lived logic; not a file store         |
+
+Do **not** store large images in DynamoDB or in the Lambda package.
+
+**Upload flow (target architecture)**
+
+```text
+1. Client → POST /photos/upload-url (Lambda)
+   ← presigned PUT URL + photoId + s3Key (e.g. users/{sub}/photos/{uuid}.jpg)
+
+2. Client → PUT file directly to S3 (bytes never through API Gateway)
+
+3. Client → POST /photos (Lambda) with { photoId, s3Key, caption }
+   → DynamoDB PutItem
+
+4. Client → GET /photos (Lambda) → Query/Scan (later: filter by ownerId)
+
+5. View image: presigned GET to S3, or CloudFront signed URL (stretch)
+```
+
+API Gateway has a **~10 MB** payload limit; direct-to-S3 upload avoids that and reduces Lambda memory/time.
+
+**S3 bucket settings to plan**
+
+- **Block all public access** on the bucket.
+- **CORS** on the bucket if the browser uploads directly to S3.
+- **SSE-S3** or **SSE-KMS** for encryption at rest.
+- Key pattern: `users/{ownerId}/photos/{photoId}.jpg` for easy IAM scoping later.
+
+**DynamoDB (when you add it)**
+
+- Start with partition key `photoId` (string); add GSI on `ownerId` when Cognito `sub` is in play.
+- Grant Lambda only `PutItem`, `GetItem`, `Query`/`Scan` on that table’s ARN.
+- Pass table name via `provider.environment.PHOTOS_TABLE` from `!Ref` in `resources`.
+
+**CloudFront—when to add it**
+
+| Stay on presigned S3 GET     | Add CloudFront                     |
+| ---------------------------- | ---------------------------------- |
+| Learning, low traffic        | Many readers, global users         |
+| Simplest IAM                 | Custom domain `cdn.example.com`    |
+| Short-lived URLs per request | Edge caching of popular thumbnails |
+
+Not in the repo yet (learning path step 9). Core app works without it.
+
+**Migrating S3 → CloudFront later**
+
+Keep **`s3Key`** in DynamoDB, not permanent `https://bucket.s3.amazonaws.com/...` strings. One function builds view URLs; switch implementation from S3 presigned GET to CloudFront signed URL. Bucket stays private; add **Origin Access Control** so only CloudFront reads objects.
+
+**CloudFront use cases (summary)**
+
+- Cache static assets and images at edge locations.
+- HTTPS and custom domain in front of private S3.
+- Reduce origin load and latency for repeat views.
+- Optional WAF, compression, HTTP/2 at the edge.

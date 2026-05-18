@@ -68,7 +68,7 @@ curl -s -X POST "$API/photos" \
 curl -s "$API/photos"
 ```
 
-### React / Amplify client flow {#react-amplify-client-flow}
+### React / Amplify client flow
 
 A browser app (including **Amplify Hosting + React**) uses the same three HTTP steps as `curl`. Only **two** requests hit your API; the file goes **directly to S3**.
 
@@ -212,7 +212,7 @@ Define a table in `serverless.yml` (`resources`), IAM scoped to that table, env 
 
 ### 5. S3 (binary) + connect to Dynamo ✅
 
-Private bucket, **`POST /photos/upload-url`** (presigned PUT), then **`POST /photos`** with **`photoId` + `s3Key` + caption**. See [Photo upload flow](#photo-upload-flow-step-5), [React / Amplify client flow](#react-amplify-client-flow), [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works), and [S3 wiring](#s3-wiring-in-serverlessyml).
+Private bucket, **`POST /photos/upload-url`** (presigned PUT), then **`POST /photos`** with **`photoId` + `s3Key` + caption**. See [Photo upload flow](#photo-upload-flow-step-5), [React / Amplify client flow](#react--amplify-client-flow), [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works), and [S3 wiring](#s3-wiring-in-serverlessyml).
 
 **Why after Dynamo:** rows are the index; S3 is where the bytes live.
 
@@ -267,12 +267,12 @@ Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serv
 | DynamoDB wiring in `serverless.yml` | [Below](#dynamodb-wiring-in-serverlessyml) |
 | S3 wiring in `serverless.yml`     | [Below](#s3-wiring-in-serverlessyml)       |
 | S3 presigned URLs (upload signing) | [Below](#s3-presigned-urls-how-upload-signing-works) |
-| React / Amplify client upload flow | [Below](#react-amplify-client-flow)        |
+| React / Amplify client upload flow | [Below](#react--amplify-client-flow)        |
 | CloudWatch (debugging endpoints)    | [Below](#cloudwatch-debugging-endpoints)   |
 | CORS                                | [Below](#cors)                             |
 | S3, DynamoDB & CloudFront           | [Below](#s3-dynamodb--cloudfront)          |
 
-### AWS account & billing {#aws-account--billing}
+### AWS account & billing
 
 **How AWS charges**
 
@@ -297,7 +297,7 @@ Caps change; always confirm in the [AWS Free Tier](https://aws.amazon.com/free/)
 - Run **`npx serverless remove`** when you finish a session so Lambda, API Gateway, and IAM roles from this service are torn down.
 - Set a **billing budget + email alert** in the AWS console (Billing → Budgets).
 
-### IAM & deploy permissions {#iam--deploy-permissions}
+### IAM & deploy permissions
 
 **Who should call AWS**
 
@@ -327,7 +327,7 @@ Serverless drives **CloudFormation**. Your deploy principal must be allowed to c
 
 Separate from your login. When you add DynamoDB/S3 in `serverless.yml`, you grant **only that role** `dynamodb:PutItem` on **one table ARN**, not admin on the whole account. That is **least privilege** at runtime.
 
-### Serverless Framework {#serverless-framework}
+### Serverless Framework
 
 **This repo**
 
@@ -349,7 +349,7 @@ Separate from your login. When you add DynamoDB/S3 in `serverless.yml`, you gran
 | `src/`           | TypeScript handlers (`handler.ts`, `photos.ts`, …)                 |
 | `.serverless/`   | Generated artifacts after deploy (gitignored)                      |
 
-### Deploy, CloudFormation & cleanup {#deploy-cloudformation--cleanup}
+### Deploy, CloudFormation & cleanup
 
 **What happens on `npx serverless deploy`**
 
@@ -385,7 +385,7 @@ A line like `hello: photostore-learn-dev-hello (156 kB)` means: function key `he
 | AWS      | Stack gone until next deploy | Publishes current `src/` / `serverless.yml`        |
 | Your Mac | No change to files           | No change to files until you edit and deploy again |
 
-### API Gateway & HTTP {#api-gateway--http}
+### API Gateway & HTTP
 
 **What this project uses**
 
@@ -462,7 +462,7 @@ Other common fields: `headers`, `body`, `pathParameters`, `cookies`, `requestCon
 | Payload v2.0 `event`         | Different v1.0 `event` shape      |
 | Simpler config in Serverless | More verbose integrations         |
 
-### DynamoDB wiring in `serverless.yml` {#dynamodb-wiring-in-serverlessyml}
+### DynamoDB wiring in `serverless.yml`
 
 This block connects Lambdas to **PhotosTable** (defined under `resources` in the same file). It does two jobs: tell functions **which table name to use**, and tell AWS **which DynamoDB actions the Lambda execution role may perform**.
 
@@ -530,7 +530,7 @@ If IAM were too broad (e.g. `dynamodb:*` on `*`), a bug or compromise in Lambda 
 
 `PhotosTable` is **pay-per-request** with partition key **`photoId`** (string). That matches items in `src/photos.ts` (`photoId`, `s3Key`, `caption`, `createdAt`).
 
-### S3 wiring in `serverless.yml` {#s3-wiring-in-serverlessyml}
+### S3 wiring in `serverless.yml`
 
 **Environment**
 
@@ -577,7 +577,7 @@ Client → POST /photos { photoId, s3Key, caption } → DynamoDB PutItem
 Client → GET /photos → Scan metadata (includes s3Key per row)
 ```
 
-### S3 presigned URLs (how upload signing works) {#s3-presigned-urls-how-upload-signing-works}
+### S3 presigned URLs (how upload signing works)
 
 This is the mechanism behind **`POST /photos/upload-url`**. The client never receives your AWS access keys; it receives a **time-limited HTTPS URL** that already contains permission to perform **one kind of S3 operation** on **one object**.
 
@@ -714,7 +714,7 @@ After a successful `PUT`:
 
 Object is not world-readable; downloading for display needs a future presigned **GET** or CloudFront (stretch goal).
 
-### CloudWatch (debugging endpoints) {#cloudwatch-debugging-endpoints}
+### CloudWatch (debugging endpoints)
 
 With this stack (**HTTP API → Lambda**), **CloudWatch Logs** is the main way to debug deployed endpoints after you call `GET /hello` (or any route you add later).
 
@@ -796,7 +796,7 @@ fields @timestamp, @message
 - **Structured logs:** `console.log(JSON.stringify({ level: "info", ... }))` makes Insights filters easier than plain strings.
 - **Local vs deployed:** fix syntax and small bugs locally first; use CloudWatch for behavior that only appears in AWS (IAM, env vars, real API Gateway events).
 
-### CORS {#cors}
+### CORS
 
 **Same origin**
 
@@ -818,7 +818,7 @@ Browser JavaScript from another origin (e.g. a future React app on `localhost:51
 - **Browser on same host as API:** often simple GET without preflight.
 - **Browser SPA on different host:** `OPTIONS` → then `GET` with CORS headers.
 
-### S3, DynamoDB & CloudFront {#s3-dynamodb--cloudfront}
+### S3, DynamoDB & CloudFront
 
 **Planned data model (photo app)**
 

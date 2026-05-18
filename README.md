@@ -68,7 +68,27 @@ curl -s -X POST "$API/photos" \
 curl -s "$API/photos"
 ```
 
-### React / Amplify client flow
+#### Handlers and routes (same upload flow)
+
+One user journey, **three HTTP steps**, **two API Lambdas** in `src/photos.ts`. Step 2 has no Lambda—the client talks to S3 directly.
+
+| Step | Route | `serverless.yml` function | Handler (`src/photos.ts`) | What it does |
+| ---- | ----- | ------------------------- | ------------------------- | ------------ |
+| **1** | `POST /photos/upload-url` | `uploadPhotoUrl` | `uploadUrl` | Presign S3 `PUT`; return `photoId`, `s3Key`, `uploadUrl` |
+| **2** | `PUT` presigned URL | — | — | Client uploads file bytes to **S3** (not API Gateway) |
+| **3** | `POST /photos` | `createPhoto` | **`create`** | Validate body; **PutItem** metadata to DynamoDB |
+| *(list)* | `GET /photos` | `listPhotos` | `list` | **Scan** metadata (separate from upload; no S3) |
+
+```text
+uploadUrl  →  (client PUT S3)  →  create
+   ↑                                  ↑
+   POST /photos/upload-url            POST /photos
+```
+
+- **`uploadUrl`** — S3 presigning only; does not write DynamoDB or receive file bytes.
+- **`create`** — DynamoDB only; assumes the object already exists at `s3Key`. Skipping step 3 leaves an orphan file in S3 with no row in `GET /photos`.
+
+### React / Amplify client flow {#react-amplify-client-flow}
 
 A browser app (including **Amplify Hosting + React**) uses the same three HTTP steps as `curl`. Only **two** requests hit your API; the file goes **directly to S3**.
 
@@ -141,6 +161,7 @@ flowchart LR
 const API = import.meta.env.VITE_API_URL; // no trailing slash
 
 export async function uploadPhoto(file: File, caption: string) {
+  // Map file MIME type → allowed contentType for presigning
   const contentType =
     file.type === "image/png"
       ? "image/png"
@@ -148,6 +169,7 @@ export async function uploadPhoto(file: File, caption: string) {
         ? "image/webp"
         : "image/jpeg";
 
+  // Step 1: POST to your API → Lambda uploadUrl → presigned PUT URL + photoId + s3Key
   const signRes = await fetch(`${API}/photos/upload-url`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -156,6 +178,7 @@ export async function uploadPhoto(file: File, caption: string) {
   if (!signRes.ok) throw new Error(await signRes.text());
   const { photoId, s3Key, uploadUrl } = await signRes.json();
 
+  // Step 2: PUT file bytes directly to S3 (not API Gateway); Content-Type must match step 1
   const putRes = await fetch(uploadUrl, {
     method: "PUT",
     headers: { "Content-Type": contentType },
@@ -163,6 +186,7 @@ export async function uploadPhoto(file: File, caption: string) {
   });
   if (!putRes.ok) throw new Error(await putRes.text());
 
+  // Step 3: POST to your API → Lambda create → DynamoDB PutItem (metadata catalog)
   const metaRes = await fetch(`${API}/photos`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -212,7 +236,7 @@ Define a table in `serverless.yml` (`resources`), IAM scoped to that table, env 
 
 ### 5. S3 (binary) + connect to Dynamo ✅
 
-Private bucket, **`POST /photos/upload-url`** (presigned PUT), then **`POST /photos`** with **`photoId` + `s3Key` + caption**. See [Photo upload flow](#photo-upload-flow-step-5), [React / Amplify client flow](#react--amplify-client-flow), [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works), and [S3 wiring](#s3-wiring-in-serverlessyml).
+Private bucket, **`POST /photos/upload-url`** (presigned PUT), then **`POST /photos`** with **`photoId` + `s3Key` + caption**. See [Photo upload flow](#photo-upload-flow-step-5), [React / Amplify client flow](#react-amplify-client-flow), [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works), and [S3 wiring](#s3-wiring-in-serverlessyml).
 
 **Why after Dynamo:** rows are the index; S3 is where the bytes live.
 
@@ -267,7 +291,7 @@ Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serv
 | DynamoDB wiring in `serverless.yml` | [Below](#dynamodb-wiring-in-serverlessyml) |
 | S3 wiring in `serverless.yml`     | [Below](#s3-wiring-in-serverlessyml)       |
 | S3 presigned URLs (upload signing) | [Below](#s3-presigned-urls-how-upload-signing-works) |
-| React / Amplify client upload flow | [Below](#react--amplify-client-flow)        |
+| React / Amplify client upload flow | [Below](#react-amplify-client-flow)        |
 | CloudWatch (debugging endpoints)    | [Below](#cloudwatch-debugging-endpoints)   |
 | CORS                                | [Below](#cors)                             |
 | S3, DynamoDB & CloudFront           | [Below](#s3-dynamodb--cloudfront)          |

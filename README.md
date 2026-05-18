@@ -68,6 +68,112 @@ curl -s -X POST "$API/photos" \
 curl -s "$API/photos"
 ```
 
+### React / Amplify client flow {#react-amplify-client-flow}
+
+A browser app (including **Amplify Hosting + React**) uses the same three HTTP steps as `curl`. Only **two** requests hit your API; the file goes **directly to S3**.
+
+Set the API base URL in the frontend (e.g. Vite `VITE_API_URL=https://<api-id>.execute-api.us-east-1.amazonaws.com`).
+
+#### Sequence (one photo upload)
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant React as React app
+  participant API as HTTP API + Lambda
+  participant S3 as S3 bucket
+  participant DDB as DynamoDB
+
+  User->>React: Pick file + caption, Submit
+  React->>API: POST /photos/upload-url<br/>{ contentType }
+  API->>API: getSignedUrl(PutObject)
+  API-->>React: { photoId, s3Key, uploadUrl }
+
+  React->>S3: PUT uploadUrl<br/>body = file bytes<br/>Content-Type matches
+  S3-->>React: 200 OK
+
+  React->>API: POST /photos<br/>{ photoId, s3Key, caption }
+  API->>DDB: PutItem
+  DDB-->>API: OK
+  API-->>React: 201 { photo }
+  React-->>User: Success
+
+  Note over React,API: Later (step 7): add Authorization Bearer on both POSTs
+  Note over React,S3: S3 PUT uses presigned URL host, not API Gateway
+```
+
+#### Request checklist
+
+| Step | From | Method | URL | Body |
+| ---- | ---- | ------ | --- | ---- |
+| 1 | React → **your API** | `POST` | `{API}/photos/upload-url` | `{ "contentType": "image/jpeg" }` |
+| 2 | React → **S3** | `PUT` | `uploadUrl` from step 1 | Raw `File` / `Blob` (same `Content-Type`) |
+| 3 | React → **your API** | `POST` | `{API}/photos` | `{ "photoId", "s3Key", "caption" }` from step 1 + form |
+
+Optional: `GET {API}/photos` to list metadata (no image bytes; viewing needs presigned GET later).
+
+#### Flowchart (who talks to whom)
+
+```mermaid
+flowchart LR
+  subgraph client [Browser / React]
+    UI[PhotoUpload form]
+  end
+
+  subgraph api [Your stack]
+    GW[HTTP API]
+    L1[uploadPhotoUrl Lambda]
+    L2[createPhoto Lambda]
+    DB[(DynamoDB)]
+  end
+
+  S3[(S3 bucket)]
+
+  UI -->|1 POST upload-url| GW --> L1
+  L1 -->|presigned URL| UI
+  UI -->|2 PUT file bytes| S3
+  UI -->|3 POST metadata| GW --> L2 --> DB
+```
+
+#### Minimal React helper (copy-paste)
+
+```ts
+const API = import.meta.env.VITE_API_URL; // no trailing slash
+
+export async function uploadPhoto(file: File, caption: string) {
+  const contentType =
+    file.type === "image/png"
+      ? "image/png"
+      : file.type === "image/webp"
+        ? "image/webp"
+        : "image/jpeg";
+
+  const signRes = await fetch(`${API}/photos/upload-url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ contentType }),
+  });
+  if (!signRes.ok) throw new Error(await signRes.text());
+  const { photoId, s3Key, uploadUrl } = await signRes.json();
+
+  const putRes = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": contentType },
+    body: file,
+  });
+  if (!putRes.ok) throw new Error(await putRes.text());
+
+  const metaRes = await fetch(`${API}/photos`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ photoId, s3Key, caption }),
+  });
+  if (!metaRes.ok) throw new Error(await metaRes.text());
+}
+```
+
+**Amplify notes:** You do **not** need Amplify **Storage** for this lesson—the app calls your custom API with `fetch`. Host the SPA on Amplify Hosting; put `VITE_API_URL` in branch env vars. After Cognito (steps 6–7), add `Authorization: Bearer <idToken>` on both API `POST`s in step 1 and 3 only.
+
 Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `image/jpeg`). Presigned URLs expire after **5 minutes** (`UPLOAD_URL_EXPIRES_SECONDS` in `src/s3.ts`).
 
 **How presigning works:** [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works) (recommended read after your first successful upload).
@@ -106,7 +212,7 @@ Define a table in `serverless.yml` (`resources`), IAM scoped to that table, env 
 
 ### 5. S3 (binary) + connect to Dynamo ✅
 
-Private bucket, **`POST /photos/upload-url`** (presigned PUT), then **`POST /photos`** with **`photoId` + `s3Key` + caption**. See [Photo upload flow](#photo-upload-flow-step-5), [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works), and [S3 wiring](#s3-wiring-in-serverlessyml).
+Private bucket, **`POST /photos/upload-url`** (presigned PUT), then **`POST /photos`** with **`photoId` + `s3Key` + caption**. See [Photo upload flow](#photo-upload-flow-step-5), [React / Amplify client flow](#react-amplify-client-flow), [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works), and [S3 wiring](#s3-wiring-in-serverlessyml).
 
 **Why after Dynamo:** rows are the index; S3 is where the bytes live.
 
@@ -161,6 +267,7 @@ Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serv
 | DynamoDB wiring in `serverless.yml` | [Below](#dynamodb-wiring-in-serverlessyml) |
 | S3 wiring in `serverless.yml`     | [Below](#s3-wiring-in-serverlessyml)       |
 | S3 presigned URLs (upload signing) | [Below](#s3-presigned-urls-how-upload-signing-works) |
+| React / Amplify client upload flow | [Below](#react-amplify-client-flow)        |
 | CloudWatch (debugging endpoints)    | [Below](#cloudwatch-debugging-endpoints)   |
 | CORS                                | [Below](#cors)                             |
 | S3, DynamoDB & CloudFront           | [Below](#s3-dynamodb--cloudfront)          |

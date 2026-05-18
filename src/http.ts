@@ -21,3 +21,30 @@ export const json = (
   headers: JSON_HEADERS,
   body: JSON.stringify(body),
 });
+
+/**
+ * Parse `event.body` as JSON for POST handlers.
+ *
+ * @param body - Raw body from API Gateway (may be undefined)
+ * @returns Parsed value, or a ready-to-return `400` response object
+ */
+export const parseJsonBody = (
+  body: string | undefined,
+):
+  | { ok: true; value: unknown }
+  | { ok: false; response: APIGatewayProxyStructuredResultV2 } => {
+  if (!body) {
+    return {
+      ok: false,
+      response: json(400, { error: "Request body is required" }),
+    };
+  }
+  try {
+    return { ok: true, value: JSON.parse(body) };
+  } catch {
+    return {
+      ok: false,
+      response: json(400, { error: "Invalid JSON body" }),
+    };
+  }
+};

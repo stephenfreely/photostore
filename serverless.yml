@@ -24,6 +24,7 @@ provider:
     cors: true
   environment:
     PHOTOS_TABLE: !Ref PhotosTable
+    PHOTOS_BUCKET: !Ref PhotosBucket
   iam:
     role:
       statements:
@@ -33,6 +34,10 @@ provider:
             - dynamodb:GetItem
             - dynamodb:Scan
           Resource: !GetAtt PhotosTable.Arn
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+          Resource: !Sub "${PhotosBucket.Arn}/*"
 
 functions:
   hello:
@@ -56,6 +61,13 @@ functions:
           path: /photos
           method: GET
 
+  uploadPhotoUrl:
+    handler: src/photos.uploadUrl
+    events:
+      - httpApi:
+          path: /photos/upload-url
+          method: POST
+
 resources:
   Resources:
     PhotosTable:
@@ -69,3 +81,28 @@ resources:
         KeySchema:
           - AttributeName: photoId
             KeyType: HASH
+
+    PhotosBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - PUT
+                - HEAD
+              AllowedOrigins:
+                - "*"
+              ExposedHeaders:
+                - ETag
+              MaxAge: 3000

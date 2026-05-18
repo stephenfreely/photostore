@@ -1,6 +1,6 @@
 # photostore-learn
 
-AWS Serverless learning project: **Lambda**, **API Gateway (HTTP API)**, **DynamoDB**, **S3**, and **Amazon Cognito**—step by step (not all implemented yet).
+AWS Serverless learning project: **Lambda**, **API Gateway (HTTP API)**, **DynamoDB**, **S3**, and **Amazon Cognito**—step by step. **Cognito / auth (steps 6–8)** are not implemented yet.
 
 ## Prerequisites
 
@@ -30,9 +30,47 @@ curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello"
 
 - **Service:** `photostore-learn` (see `serverless.yml`)
 - **Stage:** `dev` (default)
-- **Lambdas:** `hello`, `createPhoto`, `listPhotos` (TypeScript in `src/`, bundled with esbuild)
-- **API:** HTTP API — **`GET /hello`**, **`POST /photos`**, **`GET /photos`**, CORS enabled
-- **DynamoDB:** `photostore-learn-dev-photos` table (`photoId` partition key); see [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml)
+- **Lambdas:** `hello`, `createPhoto`, `listPhotos`, `uploadPhotoUrl` (TypeScript in `src/`, bundled with esbuild)
+- **API (HTTP API, CORS enabled):**
+
+  | Method | Path                   | Handler              |
+  | ------ | ---------------------- | -------------------- |
+  | `GET`  | `/hello`               | health / event echo  |
+  | `POST` | `/photos/upload-url`   | presigned S3 PUT URL |
+  | `POST` | `/photos`              | save metadata        |
+  | `GET`  | `/photos`              | list metadata        |
+
+- **DynamoDB:** `photostore-learn-dev-photos` (`photoId` partition key) — [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml)
+- **S3:** private photos bucket (SSE-S3, block public access, bucket CORS for browser PUT) — [S3 wiring](#s3-wiring-in-serverlessyml)
+
+### Photo upload flow (step 5)
+
+Use the HTTP API base URL from deploy output as `API`:
+
+```bash
+# 1. Get presigned upload URL + photoId + s3Key
+curl -s -X POST "$API/photos/upload-url" \
+  -H "content-type: application/json" \
+  -d '{"contentType":"image/jpeg"}' | tee /tmp/upload.json
+
+# 2. PUT image bytes directly to S3 (not through API Gateway)
+UPLOAD_URL=$(jq -r .uploadUrl /tmp/upload.json)
+curl -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "$UPLOAD_URL"
+
+# 3. Save metadata in DynamoDB (use photoId + s3Key from step 1)
+PHOTO_ID=$(jq -r .photoId /tmp/upload.json)
+S3_KEY=$(jq -r .s3Key /tmp/upload.json)
+curl -s -X POST "$API/photos" \
+  -H "content-type: application/json" \
+  -d "{\"photoId\":\"$PHOTO_ID\",\"s3Key\":\"$S3_KEY\",\"caption\":\"beach sunset\"}"
+
+# 4. List metadata
+curl -s "$API/photos"
+```
+
+Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `image/jpeg`). Presigned URLs expire after **5 minutes** (`UPLOAD_URL_EXPIRES_SECONDS` in `src/s3.ts`).
+
+**Next lesson step:** **6. Cognito User Pool** in the [learning path](#learning-path-recommended-order) — identity and JWTs before protecting routes.
 
 ---
 
@@ -64,13 +102,13 @@ Define a table in `serverless.yml` (`resources`), IAM scoped to that table, env 
 
 **Why before S3:** learn one data service and IAM boundary without file uploads.
 
-### 5. S3 (binary) + connect to Dynamo
+### 5. S3 (binary) + connect to Dynamo ✅
 
-Private bucket, **presigned upload URL**; then **`POST`** (or “complete upload”) to store **`s3Key` + caption** (and later **`ownerId`**) in Dynamo.
+Private bucket, **`POST /photos/upload-url`** (presigned PUT), then **`POST /photos`** with **`photoId` + `s3Key` + caption**. See [Photo upload flow](#photo-upload-flow-step-5) and [S3 wiring](#s3-wiring-in-serverlessyml).
 
 **Why after Dynamo:** rows are the index; S3 is where the bytes live.
 
-### 6. Cognito User Pool (identity)
+### 6. Cognito User Pool (identity) ← next
 
 Create a user pool + app client; obtain tokens (console or small test flow).
 
@@ -119,6 +157,7 @@ Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serv
 | Deploy, CloudFormation & cleanup    | [Below](#deploy-cloudformation--cleanup)   |
 | API Gateway & HTTP                  | [Below](#api-gateway--http)                |
 | DynamoDB wiring in `serverless.yml` | [Below](#dynamodb-wiring-in-serverlessyml) |
+| S3 wiring in `serverless.yml`     | [Below](#s3-wiring-in-serverlessyml)       |
 | CloudWatch (debugging endpoints)    | [Below](#cloudwatch-debugging-endpoints)   |
 | CORS                                | [Below](#cors)                             |
 | S3, DynamoDB & CloudFront           | [Below](#s3-dynamodb--cloudfront)          |
@@ -196,18 +235,18 @@ Separate from your login. When you add DynamoDB/S3 in `serverless.yml`, you gran
 
 | File             | Role                                                               |
 | ---------------- | ------------------------------------------------------------------ |
-| `serverless.yml` | Service name, region, functions, events, future `resources` block  |
-| `handler.js`     | Lambda entry (`handler.hello` → file `handler.js`, export `hello`) |
+| `serverless.yml` | Service name, region, functions, events, `resources` (DynamoDB, S3) |
+| `src/`           | TypeScript handlers (`handler.ts`, `photos.ts`, …)                 |
 | `.serverless/`   | Generated artifacts after deploy (gitignored)                      |
 
 ### Deploy, CloudFormation & cleanup {#deploy-cloudformation--cleanup}
 
 **What happens on `npx serverless deploy`**
 
-1. Serverless packages `handler.js` (and dependencies when you add them).
+1. Serverless bundles `src/` with esbuild (see `serverless-esbuild` plugin).
 2. Uploads the zip to an S3 bucket AWS uses for deployments (managed by the framework).
 3. Creates or updates a **CloudFormation stack** named like `photostore-learn-dev`.
-4. CloudFormation creates/updates resources defined by the framework: today that is mainly **Lambda**, **IAM role**, **CloudWatch log group**, **HTTP API**, and the **route → Lambda integration**.
+4. CloudFormation creates/updates resources defined by the framework: **Lambda**, **IAM role**, **CloudWatch log groups**, **HTTP API**, **DynamoDB table**, **S3 bucket**, and route → Lambda integrations.
 
 **Lambda name rule**
 
@@ -216,7 +255,7 @@ Separate from your login. When you add DynamoDB/S3 in `serverless.yml`, you gran
 photostore-learn + dev + hello → photostore-learn-dev-hello
 ```
 
-Defined in config by `service: photostore-learn`, default `stage: dev`, and `functions.hello`—not a string in `handler.js`.
+Defined in config by `service: photostore-learn`, default `stage: dev`, and `functions.hello`—not a string in application code.
 
 **Deploy output**
 
@@ -233,7 +272,7 @@ A line like `hello: photostore-learn-dev-hello (156 kB)` means: function key `he
 
 | Location | `remove` effect              | `deploy` effect                                    |
 | -------- | ---------------------------- | -------------------------------------------------- |
-| AWS      | Stack gone until next deploy | Publishes current `handler.js` / `serverless.yml`  |
+| AWS      | Stack gone until next deploy | Publishes current `src/` / `serverless.yml`        |
 | Your Mac | No change to files           | No change to files until you edit and deploy again |
 
 ### API Gateway & HTTP {#api-gateway--http}
@@ -249,14 +288,14 @@ provider:
     cors: true
 functions:
   hello:
-    handler: handler.hello
+    handler: src/handler.hello
     events:
       - httpApi:
           path: /hello
           method: GET
 ```
 
-Only **GET** `/hello` invokes `hello`. Other paths/methods return 404 unless you add more `events`.
+Routes are declared per function under `events`. This repo also wires **`POST /photos/upload-url`**, **`POST /photos`**, and **`GET /photos`** (see [Current stack](#current-stack)).
 
 **End-to-end request flow**
 
@@ -265,7 +304,7 @@ Client (curl, browser, app)
   → HTTPS GET https://<api-id>.execute-api.us-east-1.amazonaws.com/hello
   → API Gateway HTTP API (TLS termination, route match)
   → Lambda Invoke (photostore-learn-dev-hello)
-  → handler.hello(event) runs in Node 20
+  → src/handler.hello(event) runs in Node 20
   → returns { statusCode, headers, body }
   → API Gateway maps that to HTTP response
   → Client receives JSON
@@ -283,7 +322,7 @@ Lambda does not write to the socket directly. It must return:
 }
 ```
 
-`handler.js` also echoes parts of `event` so you can see what API Gateway passed in.
+`src/handler.ts` also echoes parts of `event` so you can see what API Gateway passed in.
 
 **HTTP API event (payload format 2.0)—fields used in this repo**
 
@@ -358,10 +397,11 @@ This is **not** your personal IAM user. It augments the **Lambda execution role*
 
 **How this maps to the API**
 
-| Route          | Handler       | DynamoDB API used | IAM action required |
-| -------------- | ------------- | ----------------- | ------------------- |
-| `POST /photos` | `createPhoto` | `PutItem`         | `dynamodb:PutItem`  |
-| `GET /photos`  | `listPhotos`  | `Scan`            | `dynamodb:Scan`     |
+| Route                      | Handler           | DynamoDB API used | IAM action required |
+| -------------------------- | ----------------- | ----------------- | ------------------- |
+| `POST /photos/upload-url`  | `uploadPhotoUrl`  | —                 | —                   |
+| `POST /photos`             | `createPhoto`     | `PutItem`         | `dynamodb:PutItem`  |
+| `GET /photos`              | `listPhotos`      | `Scan`            | `dynamodb:Scan`     |
 
 `GetItem` is allowed now for a future “get one photo by id” route; nothing calls it yet.
 
@@ -379,6 +419,53 @@ If IAM were too broad (e.g. `dynamodb:*` on `*`), a bug or compromise in Lambda 
 **Table definition (same file, `resources`)**
 
 `PhotosTable` is **pay-per-request** with partition key **`photoId`** (string). That matches items in `src/photos.ts` (`photoId`, `s3Key`, `caption`, `createdAt`).
+
+### S3 wiring in `serverless.yml` {#s3-wiring-in-serverlessyml}
+
+**Environment**
+
+| Piece            | Meaning                                                                 |
+| ---------------- | ----------------------------------------------------------------------- |
+| `PHOTOS_BUCKET`  | Injected into Lambdas; `!Ref PhotosBucket` resolves to the bucket name |
+| `src/s3.ts`      | `photosBucketName()` reads `process.env.PHOTOS_BUCKET`                  |
+
+**IAM (Lambda execution role)**
+
+```yaml
+- Effect: Allow
+  Action:
+    - s3:PutObject
+  Resource: !Sub "${PhotosBucket.Arn}/*"
+```
+
+Only **`PutObject`** on objects in this bucket—enough to mint presigned PUT URLs. No public read; viewing images via presigned GET comes in a later stretch goal.
+
+**Bucket (`PhotosBucket` under `resources`)**
+
+| Setting                         | Purpose                                              |
+| ------------------------------- | ---------------------------------------------------- |
+| `PublicAccessBlockConfiguration` | Block all public access                            |
+| `BucketEncryption` (SSE-S3)     | Encrypt objects at rest                              |
+| `CorsConfiguration`               | Allow browser `PUT` directly to presigned URLs       |
+
+CloudFormation assigns the bucket name (no hard-coded global name). Find it after deploy: Lambda env `PHOTOS_BUCKET`, or **S3 → Buckets** in the console.
+
+**How routes use S3**
+
+| Route                      | Handler           | S3 usage                                      |
+| -------------------------- | ----------------- | --------------------------------------------- |
+| `POST /photos/upload-url`  | `uploadPhotoUrl`  | `getSignedUrl` for `PutObject` on `photos/{id}.jpg` |
+| `POST /photos`             | `createPhoto`     | None (metadata only; bytes already in S3)     |
+| `GET /photos`              | `listPhotos`      | None (returns `s3Key`; no download URL yet)    |
+
+**End-to-end upload**
+
+```text
+Client → POST /photos/upload-url → Lambda returns { photoId, s3Key, uploadUrl }
+Client → PUT uploadUrl (direct to S3; bytes bypass API Gateway)
+Client → POST /photos { photoId, s3Key, caption } → DynamoDB PutItem
+Client → GET /photos → Scan metadata (includes s3Key per row)
+```
 
 ### CloudWatch (debugging endpoints) {#cloudwatch-debugging-endpoints}
 
@@ -496,36 +583,43 @@ Browser JavaScript from another origin (e.g. a future React app on `localhost:51
 
 Do **not** store large images in DynamoDB or in the Lambda package.
 
-**Upload flow (target architecture)**
+**Upload flow (implemented — step 5)**
 
 ```text
 1. Client → POST /photos/upload-url (Lambda)
-   ← presigned PUT URL + photoId + s3Key (e.g. users/{sub}/photos/{uuid}.jpg)
+   ← presigned PUT URL + photoId + s3Key (e.g. photos/{uuid}.jpg)
 
 2. Client → PUT file directly to S3 (bytes never through API Gateway)
 
 3. Client → POST /photos (Lambda) with { photoId, s3Key, caption }
    → DynamoDB PutItem
 
-4. Client → GET /photos (Lambda) → Query/Scan (later: filter by ownerId)
+4. Client → GET /photos (Lambda) → Scan (later: Query by ownerId)
 
-5. View image: presigned GET to S3, or CloudFront signed URL (stretch)
+5. View image: presigned GET to S3, or CloudFront signed URL (stretch — step 9)
 ```
+
+See [Photo upload flow](#photo-upload-flow-step-5) for `curl` examples.
 
 API Gateway has a **~10 MB** payload limit; direct-to-S3 upload avoids that and reduces Lambda memory/time.
 
-**S3 bucket settings to plan**
+**S3 bucket settings in this repo**
 
-- **Block all public access** on the bucket.
-- **CORS** on the bucket if the browser uploads directly to S3.
-- **SSE-S3** or **SSE-KMS** for encryption at rest.
-- Key pattern: `users/{ownerId}/photos/{photoId}.jpg` for easy IAM scoping later.
+- **Block all public access** — configured on `PhotosBucket`.
+- **CORS** — `PUT` / `HEAD` allowed for browser uploads to presigned URLs.
+- **SSE-S3** — default encryption on the bucket.
+- **Key pattern today:** `photos/{photoId}.jpg` (or `.png` / `.webp`). **Later (step 8):** `users/{ownerId}/photos/{photoId}.jpg`.
 
-**DynamoDB (implemented)**
+**DynamoDB (implemented — step 4)**
 
-- Table: `photostore-learn-dev-photos`, key **`photoId`** (string). Metadata routes: **`POST /photos`**, **`GET /photos`**.
+- Table: `photostore-learn-dev-photos`, key **`photoId`** (string). Routes: **`POST /photos`**, **`GET /photos`**.
 - Wiring: [DynamoDB in `serverless.yml`](#dynamodb-wiring-in-serverlessyml) (`PHOTOS_TABLE` env + IAM on table ARN).
 - Later: GSI on `ownerId` when Cognito `sub` is in play; replace `Scan` with `Query` for “my photos only.”
+
+**S3 (implemented — step 5)**
+
+- Private bucket via `PhotosBucket`; presigned upload via **`POST /photos/upload-url`**.
+- Wiring: [S3 in `serverless.yml`](#s3-wiring-in-serverlessyml) (`PHOTOS_BUCKET` env + `s3:PutObject` on bucket objects).
 
 **CloudFront—when to add it**
 

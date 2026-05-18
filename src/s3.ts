@@ -3,11 +3,16 @@
  *
  * `PHOTOS_BUCKET` is set in `serverless.yml` from the CloudFormation bucket ref.
  * Objects are private; clients upload via presigned PUT URLs minted by Lambda.
+ *
+ * @see README — “S3 presigned URLs (how upload signing works)”
  */
 
 import { S3Client } from "@aws-sdk/client-s3";
 
-/** How long presigned upload URLs remain valid (seconds). */
+/**
+ * How long presigned upload URLs remain valid (seconds).
+ * Passed to `getSignedUrl` as `expiresIn`; S3 rejects PUTs after this window.
+ */
 export const UPLOAD_URL_EXPIRES_SECONDS = 300;
 
 /** Maps allowed `Content-Type` values to file extensions in S3 keys. */

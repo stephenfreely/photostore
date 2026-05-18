@@ -70,6 +70,8 @@ curl -s "$API/photos"
 
 Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `image/jpeg`). Presigned URLs expire after **5 minutes** (`UPLOAD_URL_EXPIRES_SECONDS` in `src/s3.ts`).
 
+**How presigning works:** [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works) (recommended read after your first successful upload).
+
 **Next lesson step:** **6. Cognito User Pool** in the [learning path](#learning-path-recommended-order) — identity and JWTs before protecting routes.
 
 ---
@@ -104,7 +106,7 @@ Define a table in `serverless.yml` (`resources`), IAM scoped to that table, env 
 
 ### 5. S3 (binary) + connect to Dynamo ✅
 
-Private bucket, **`POST /photos/upload-url`** (presigned PUT), then **`POST /photos`** with **`photoId` + `s3Key` + caption**. See [Photo upload flow](#photo-upload-flow-step-5) and [S3 wiring](#s3-wiring-in-serverlessyml).
+Private bucket, **`POST /photos/upload-url`** (presigned PUT), then **`POST /photos`** with **`photoId` + `s3Key` + caption**. See [Photo upload flow](#photo-upload-flow-step-5), [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works), and [S3 wiring](#s3-wiring-in-serverlessyml).
 
 **Why after Dynamo:** rows are the index; S3 is where the bytes live.
 
@@ -158,6 +160,7 @@ Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serv
 | API Gateway & HTTP                  | [Below](#api-gateway--http)                |
 | DynamoDB wiring in `serverless.yml` | [Below](#dynamodb-wiring-in-serverlessyml) |
 | S3 wiring in `serverless.yml`     | [Below](#s3-wiring-in-serverlessyml)       |
+| S3 presigned URLs (upload signing) | [Below](#s3-presigned-urls-how-upload-signing-works) |
 | CloudWatch (debugging endpoints)    | [Below](#cloudwatch-debugging-endpoints)   |
 | CORS                                | [Below](#cors)                             |
 | S3, DynamoDB & CloudFront           | [Below](#s3-dynamodb--cloudfront)          |
@@ -438,7 +441,7 @@ If IAM were too broad (e.g. `dynamodb:*` on `*`), a bug or compromise in Lambda 
   Resource: !Sub "${PhotosBucket.Arn}/*"
 ```
 
-Only **`PutObject`** on objects in this bucket—enough to mint presigned PUT URLs. No public read; viewing images via presigned GET comes in a later stretch goal.
+Only **`PutObject`** on objects in this bucket—enough to mint presigned PUT URLs. No public read; viewing images via presigned GET comes in a later stretch goal. See [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works) for how signing works end-to-end.
 
 **Bucket (`PhotosBucket` under `resources`)**
 
@@ -466,6 +469,143 @@ Client → PUT uploadUrl (direct to S3; bytes bypass API Gateway)
 Client → POST /photos { photoId, s3Key, caption } → DynamoDB PutItem
 Client → GET /photos → Scan metadata (includes s3Key per row)
 ```
+
+### S3 presigned URLs (how upload signing works) {#s3-presigned-urls-how-upload-signing-works}
+
+This is the mechanism behind **`POST /photos/upload-url`**. The client never receives your AWS access keys; it receives a **time-limited HTTPS URL** that already contains permission to perform **one kind of S3 operation** on **one object**.
+
+#### Problem presigning solves
+
+| Approach | Issue |
+| -------- | ----- |
+| Send file through API Gateway → Lambda → S3 | ~10 MB API limit, expensive Lambda memory/time, slow |
+| Give the browser your AWS credentials | Never safe; full account access if leaked |
+| Make the bucket public for `PUT` | Anyone on the internet could upload garbage |
+| **Presigned URL** | Lambda (trusted) signs a **narrow, temporary** upload; client uploads **directly to S3** |
+
+#### Who has credentials?
+
+```text
+┌─────────────────┐     IAM role: s3:PutObject      ┌──────────────────┐
+│ Lambda          │     on PhotosBucket/* only      │ S3 (private)     │
+│ uploadPhotoUrl  │ ──────────────────────────────► │ photos/{id}.jpg  │
+└────────┬────────┘                                 └────────▲─────────┘
+         │ getSignedUrl()                                      │
+         │ (uses execution role creds)                         │ PUT + signed query string
+         ▼                                                     │
+┌─────────────────┐   uploadUrl (no AWS keys)        ┌────────┴─────────┐
+│ Client          │ ────────────────────────────────►│ S3 validates     │
+│ curl / browser  │                                  │ signature        │
+└─────────────────┘                                  └──────────────────┘
+```
+
+1. **Lambda** runs with the **execution role** from `serverless.yml` (`s3:PutObject` on your bucket only).
+2. **`getSignedUrl`** (AWS SDK) builds a `PutObject` request in memory and **signs** it with those role credentials.
+3. The SDK returns a normal HTTPS URL (bucket hostname + object key + **query parameters** that carry the signature).
+4. The **client** issues `PUT` to that URL. **S3** (not Lambda) receives the bytes and checks the signature, expiry, and headers.
+
+The client never calls `aws configure` and never sees `AWS_ACCESS_KEY_ID` for your account.
+
+#### What is “in” a presigned URL?
+
+The URL looks like ordinary S3 HTTPS, with extra query params (names vary slightly by SDK version), for example:
+
+```text
+https://<bucket>.s3.<region>.amazonaws.com/photos/<photoId>.jpg
+  ?X-Amz-Algorithm=AWS4-HMAC-SHA256
+  &X-Amz-Credential=...%2F<date>%2F<region>%2Fs3%2Faws4_request
+  &X-Amz-Date=...
+  &X-Amz-Expires=300
+  &X-Amz-SignedHeaders=content-type%3Bhost
+  &X-Amz-Signature=<hex>
+```
+
+| Piece | Meaning |
+| ----- | ------- |
+| Path | Exact **object key** (`photos/{photoId}.jpg`) — client cannot change key without invalidating the signature |
+| `X-Amz-Expires` | Lifetime in seconds (this repo: **300** = 5 minutes, see `UPLOAD_URL_EXPIRES_SECONDS` in `src/s3.ts`) |
+| `X-Amz-SignedHeaders` | Headers that must match on the real `PUT` (here: **`host`** and **`content-type`**) |
+| `X-Amz-Signature` | Cryptographic proof that something with `s3:PutObject` on this object created the URL |
+
+If the client changes the key, uses `POST` instead of `PUT`, sends the wrong `Content-Type`, or waits past expiry, S3 returns **403 Forbidden** (often `SignatureDoesNotMatch` or `Request has expired`).
+
+#### What this repo signs (code)
+
+In `src/photos.ts`, `uploadUrl` builds a **`PutObject`** command and passes it to the presigner:
+
+```ts
+await getSignedUrl(
+  s3Client,
+  new PutObjectCommand({
+    Bucket: photosBucketName(),
+    Key: s3Key,                        // e.g. photos/<uuid>.jpg
+    ContentType: body.data.contentType, // must match the client PUT header
+  }),
+  { expiresIn: UPLOAD_URL_EXPIRES_SECONDS },
+);
+```
+
+| Field in command | Why it matters |
+| ---------------- | -------------- |
+| `Bucket` | Must be your private `PhotosBucket` |
+| `Key` | Locks upload to one path; returned to client as `s3Key` for DynamoDB |
+| `ContentType` | Baked into signature — client **must** send the same `Content-Type` on `PUT` |
+
+The handler also generates **`photoId`** and **`s3Key`** before signing so step 3 (`POST /photos`) can store the same identifiers in DynamoDB after the upload.
+
+#### Client `PUT` requirements
+
+After `POST /photos/upload-url`:
+
+```bash
+curl -X PUT \
+  -H "Content-Type: image/jpeg" \
+  --data-binary @photo.jpg \
+  "$UPLOAD_URL"
+```
+
+- Use **`PUT`**, not `POST` (this app presigns `PutObject`, not multipart POST policy).
+- **`Content-Type`** must match what you sent to `/photos/upload-url` (default `image/jpeg`).
+- Body is the **raw file bytes** (not JSON wrapping the file).
+- Upload must finish **before** `expiresInSeconds` (300s).
+
+#### Presigned PUT vs presigned POST (not used here)
+
+| | Presigned **PUT** (this repo) | Presigned **POST** (multipart form) |
+| - | ----------------------------- | ----------------------------------- |
+| Client sends | Raw body with `PUT` | `multipart/form-data` with fields + file |
+| Typical use | Simple APIs, mobile, curl | Browser uploads with form posts |
+| Our code | `PutObjectCommand` + `getSignedUrl` | Would use `createPresignedPost` instead |
+
+#### CORS and presigning
+
+Presigning is **authorization**. **CORS** is separate: the browser still checks whether S3 allows your web app’s origin to read the response from `PUT`. `PhotosBucket` in `serverless.yml` sets `CorsConfiguration` with `PUT` and `HEAD` so a future SPA on `localhost:5173` (or similar) can upload without the API proxying bytes. **curl** ignores CORS.
+
+#### Security in *this* learning stack
+
+- The bucket stays **private**; the URL is not a public bucket policy.
+- Each URL is **scoped** to one key and one HTTP method (`PUT`).
+- URLs **expire** quickly.
+- **Gap (fixed in step 6–7):** anyone who can hit your HTTP API can still call `/photos/upload-url` and get a valid upload URL. Cognito + JWT on the API will tie presigning to logged-in users; step 8 will prefix keys with `users/{sub}/`.
+
+#### Common failures
+
+| Symptom | Likely cause |
+| ------- | ------------- |
+| `403` / `SignatureDoesNotMatch` | Wrong `Content-Type`, changed URL, or used `POST` instead of `PUT` |
+| `403` / request expired | Waited longer than `expiresInSeconds` |
+| `403` from API (not S3) | Calling `uploadUrl` without deploy / wrong API URL |
+| CORS error in browser only | Bucket CORS or missing `Content-Type` on preflight/PUT |
+| Upload works but “empty” gallery | Forgot step 3 — `POST /photos` with same `photoId` and `s3Key` |
+
+#### Verify in AWS Console
+
+After a successful `PUT`:
+
+1. **S3** → your photos bucket → prefix `photos/` → object with your `photoId` in the key.
+2. **DynamoDB** → `photostore-learn-dev-photos` → item with matching `photoId` and `s3Key` (after step 3).
+
+Object is not world-readable; downloading for display needs a future presigned **GET** or CloudFront (stretch goal).
 
 ### CloudWatch (debugging endpoints) {#cloudwatch-debugging-endpoints}
 

@@ -50,7 +50,8 @@ export type PhotoItem = {
  * Flow:
  * 1. Client sends optional `{ "contentType": "image/jpeg" }`
  * 2. Lambda generates `photoId`, `s3Key` (`photos/{photoId}.jpg`, etc.)
- * 3. Returns `uploadUrl` — client PUTs file bytes directly to S3 (not via API Gateway)
+ * 3. Returns `uploadUrl` — client PUTs file bytes directly to S3 (not via API Gateway).
+ *    See README “S3 presigned URLs” for how `getSignedUrl` / signatures work.
  * 4. Client then calls {@link create} with the same `photoId` and `s3Key`
  *
  * @param event - HTTP API event; body may be `{}` or include `contentType`

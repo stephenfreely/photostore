@@ -2,6 +2,8 @@
 
 AWS Serverless learning project: **Lambda**, **API Gateway (HTTP API)**, **DynamoDB**, **S3**, and **Amazon Cognito**—step by step through **step 8** (identity, JWT authorizer, per-user photos). Stretch goals (step 9) are optional.
 
+Each service is explained where it appears in the repo; start with [AWS services in this project](#aws-services-in-this-project) in the stack reference for a one-page glossary.
+
 ## Prerequisites
 
 - Node.js and npm
@@ -239,6 +241,19 @@ Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `
 ---
 
 ## Cognito & JWT auth (steps 6–8)
+
+#### What is Amazon Cognito?
+
+**Amazon Cognito** handles **application users**: sign-up, sign-in, password rules, and issuing **JWT tokens** so your API knows who is calling. It is **not** your photo database and **not** Lambda.
+
+| Piece | What it does |
+| ----- | ------------- |
+| **User Pool** | Directory of users (this repo: email + password). |
+| **User Pool Client** | Your SPA’s app id — allowed login flows; JWT **audience**. |
+| **IdToken (JWT)** | Sent as `Authorization: Bearer …` to API Gateway; includes **`sub`** (user id). |
+| **Identity Pool** *(not used yet)* | Would grant temporary **AWS credentials** to the browser for direct S3 — optional in step 9. |
+
+Sign-up and sign-in go **Client ↔ Cognito** directly. Your Lambdas only see the validated JWT claims after API Gateway’s authorizer runs.
 
 ### What was added
 
@@ -793,8 +808,34 @@ Use **`npx serverless remove`** when an experiment is done so you do not leave L
 
 Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serverless.yml` and `src/` as they exist today, plus what the [learning path](#learning-path-recommended-order) adds later.
 
+### AWS services in this project
+
+Quick definitions of every AWS service this repo uses (and a few related ones mentioned in stretch goals).
+
+| Service | What it is | Role in photostore-learn |
+| ------- | ---------- | ------------------------- |
+| **[Lambda](#what-is-lambda)** | Run code without managing servers; pay per invocation and duration. | Runs `hello`, `uploadUrl`, `create`, `list` — your TypeScript in `src/`. |
+| **[API Gateway (HTTP API)](#what-is-api-gateway)** | Managed HTTPS front door: routes, TLS, throttling, optional auth. | Public URL for `/hello` and `/photos*`; JWT authorizer on protected routes. |
+| **[DynamoDB](#what-is-dynamodb)** | Managed NoSQL database; key–value / document rows; millisecond latency at scale. | Stores photo **metadata** (`photoId`, `ownerId`, `s3Key`, `caption`). |
+| **[S3](#what-is-s3)** | Object storage for files (images, backups, static sites). | Stores **image bytes**; private bucket; browser uploads via presigned PUT. |
+| **[Amazon Cognito](#what-is-amazon-cognito)** | User sign-up/sign-in and JWT tokens (User Pools). | Who is logged in; `sub` → `ownerId`; no Lambda for sign-in. |
+| **[IAM](#what-is-iam)** | Permissions: who can call which AWS API actions on which resources. | Your deploy user + **Lambda execution role** (`s3:PutObject`, `dynamodb:Query`, …). |
+| **[CloudFormation](#what-is-cloudformation)** | Infrastructure as code; stacks create/update/delete AWS resources as a unit. | `serverless deploy` creates/updates the stack from `serverless.yml`. |
+| **[CloudWatch Logs](#what-is-cloudwatch)** | Log storage and search for Lambda and other services. | Debug `console.log` / errors after deploy (`/aws/lambda/...`). |
+| **CloudFront** *(step 9)* | CDN: cache content at edge locations closer to users. | Optional faster image **viewing**; not deployed in core steps. |
+
+```text
+Browser / curl
+    → API Gateway (HTTP API)     ← HTTPS routes, JWT check
+        → Lambda                 ← business logic (TypeScript)
+            → DynamoDB           ← metadata rows
+            → S3 (presigned)     ← image files (client uploads direct)
+    ↔ Cognito                    ← sign-in only (separate from API routes)
+```
+
 | Topic                               | Section                                    |
 | ----------------------------------- | ------------------------------------------ |
+| AWS services glossary               | [Above](#aws-services-in-this-project)     |
 | AWS account & billing               | [Below](#aws-account--billing)             |
 | IAM & deploy permissions            | [Below](#iam--deploy-permissions)          |
 | Serverless Framework                | [Below](#serverless-framework)             |
@@ -839,6 +880,18 @@ Caps change; always confirm in the [AWS Free Tier](https://aws.amazon.com/free/)
 - Set a **billing budget + email alert** in the AWS console (Billing → Budgets).
 
 ### IAM & deploy permissions
+
+#### What is IAM?
+
+**IAM (Identity and Access Management)** defines **who** can do **what** in your AWS account. It does not run your app code.
+
+| Concept | Meaning |
+| ------- | ------- |
+| **IAM user / role** | Your identity for `aws configure`, console, and `serverless deploy`. |
+| **Policy** | JSON list of allowed actions (e.g. `lambda:UpdateFunctionCode`) on resources. |
+| **Lambda execution role** | Special role **Lambda assumes** when your function runs — so the handler can call DynamoDB/S3. |
+
+Users and roles are separate: you deploy with **your** credentials; at runtime the function uses **its** role (`provider.iam` in `serverless.yml`).
 
 **Who should call AWS**
 
@@ -892,6 +945,33 @@ Separate from your login. When you add DynamoDB/S3 in `serverless.yml`, you gran
 
 ### Deploy, CloudFormation & cleanup
 
+#### What is CloudFormation?
+
+**AWS CloudFormation** turns a template (YAML/JSON) into a **stack** of real resources. Create, update, or delete the stack as one unit.
+
+| Term | Meaning |
+| ---- | ------- |
+| **Stack** | Named set of resources for this app (e.g. `photostore-learn-dev`). |
+| **Template** | Desired state — Serverless generates it from `serverless.yml`. |
+| **`deploy`** | Create or update the stack to match the template. |
+| **`remove`** | Delete the stack and (usually) all resources it owns. |
+
+You rarely author raw CloudFormation by hand here; **Serverless Framework** compiles `serverless.yml` into a CloudFormation template and submits it.
+
+#### What is Lambda?
+
+**AWS Lambda** runs your function code **on demand**. AWS provisions compute, runs the handler, then can freeze or discard the instance. You are not SSH-ing into a server.
+
+| Idea | In this repo |
+| ---- | ------------- |
+| **Function** | One handler export (`hello`, `uploadUrl`, `create`, `list`) per `functions.*` key in `serverless.yml`. |
+| **Trigger** | HTTP API invokes the function when a route matches. |
+| **Package** | esbuild bundles `src/` into a zip uploaded on deploy. |
+| **Runtime** | `nodejs20.x` — Node 20. |
+| **Timeout / memory** | Defaults from Serverless; billable per ms of execution. |
+
+Lambda is **stateless** between invocations (do not rely on in-memory globals for durable data — use DynamoDB/S3).
+
 **What happens on `npx serverless deploy`**
 
 1. Serverless bundles `src/` with esbuild (see `serverless-esbuild` plugin).
@@ -927,6 +1007,19 @@ A line like `hello: photostore-learn-dev-hello (156 kB)` means: function key `he
 | Your Mac | No change to files           | No change to files until you edit and deploy again |
 
 ### API Gateway & HTTP
+
+#### What is API Gateway?
+
+**Amazon API Gateway** is the **HTTPS entry point** for your API. Clients call a URL like `https://<api-id>.execute-api.<region>.amazonaws.com/...`; API Gateway matches the path and method, optionally checks auth, then **invokes** Lambda (or other backends).
+
+| Term | Meaning |
+| ---- | ------- |
+| **HTTP API** | Newer, simpler, cheaper API type (v2). This repo uses it, not the older REST API. |
+| **Route** | Path + method (e.g. `GET /hello`, `POST /photos`). |
+| **Integration** | What happens when a route matches — here, **Lambda proxy** (pass full request as `event`). |
+| **JWT authorizer** | Validates `Authorization: Bearer <token>` **before** Lambda runs (Cognito IdToken). |
+
+API Gateway does **not** store your photos; it forwards requests and returns Lambda’s HTTP response to the client.
 
 **What this project uses**
 
@@ -1005,6 +1098,20 @@ Other common fields: `headers`, `body`, `pathParameters`, `cookies`, `requestCon
 
 ### DynamoDB wiring in `serverless.yml`
 
+#### What is DynamoDB?
+
+**Amazon DynamoDB** is a **managed NoSQL database**: you store **items** (rows) identified by **keys**, without provisioning database servers. AWS handles scaling, replication, and durability.
+
+| Term | Meaning |
+| ---- | ------- |
+| **Table** | Collection of items (e.g. `photostore-learn-dev-photos`). |
+| **Partition key** | Required unique id per item — here `photoId`. |
+| **GSI (Global Secondary Index)** | Alternate query pattern — here `byOwner` to list photos per `ownerId`. |
+| **PutItem / Query** | Write one row / read by key or index (no SQL). |
+| **On-demand billing** | Pay per read/write request; good for learning workloads. |
+
+**Good for:** captions, ids, user ownership, small JSON. **Bad for:** large image files (use S3).
+
 This block connects Lambdas to **PhotosTable** (defined under `resources` in the same file). It does two jobs: tell functions **which table name to use**, and tell AWS **which DynamoDB actions the Lambda execution role may perform**.
 
 ```yaml
@@ -1079,6 +1186,19 @@ If IAM were too broad (e.g. `dynamodb:*` on `*`), a bug or compromise in Lambda 
 Items in `src/photos.ts`: `photoId`, `ownerId`, `s3Key`, `caption`, `createdAt`.
 
 ### S3 wiring in `serverless.yml`
+
+#### What is S3?
+
+**Amazon S3 (Simple Storage Service)** is **object storage**: you upload **objects** (files) into **buckets**, each identified by a **key** (path-like string). It is built for durability and very low cost per GB.
+
+| Term | Meaning |
+| ---- | ------- |
+| **Bucket** | Top-level container (globally unique name). `PhotosBucket` in this repo. |
+| **Object / key** | One file, e.g. `users/<sub>/photos/<id>.jpg`. |
+| **Private bucket** | No public read; access via IAM or **presigned URLs**. |
+| **Presigned URL** | Time-limited link allowing one operation (here `PUT` upload) without giving the client your AWS keys. |
+
+**Good for:** JPEG/PNG bytes. **Bad for:** querying “all photos for user X” (use DynamoDB for that; S3 only holds files).
 
 **Environment**
 
@@ -1264,6 +1384,18 @@ Object is not world-readable; downloading for display needs a future presigned *
 
 ### CloudWatch (debugging endpoints)
 
+#### What is CloudWatch?
+
+**Amazon CloudWatch** collects **metrics** and **logs** from AWS services. For this project, **CloudWatch Logs** is what matters day to day: every Lambda invocation can write to a **log group** (e.g. `/aws/lambda/photostore-learn-dev-hello`).
+
+| Use | In this repo |
+| --- | ------------- |
+| **View `console.log` / errors** | After `curl` or browser calls, open the function’s log group in the console or `serverless logs -f hello -t`. |
+| **Metrics** | Lambda invocations, duration, errors (automatic). |
+| **Alarms** | Optional — not configured in the learning stack. |
+
+CloudWatch does not fix bugs; it shows what Lambda actually ran and printed in AWS.
+
 With this stack (**HTTP API → Lambda**), **CloudWatch Logs** is the main way to debug deployed endpoints after you call `GET /hello` (or any route you add later).
 
 **What gets logged automatically**
@@ -1367,6 +1499,10 @@ Browser JavaScript from another origin (e.g. a future React app on `localhost:51
 - **Browser SPA on different host:** `OPTIONS` → then `GET` with CORS headers.
 
 ### S3, DynamoDB & CloudFront
+
+#### What is CloudFront? *(stretch — step 9)*
+
+**Amazon CloudFront** is a **CDN (Content Delivery Network)**. It caches copies of content (often from S3) at **edge locations** worldwide so repeat downloads are faster and cheaper at scale. This repo’s core path uses **presigned S3 URLs** only; CloudFront is an optional upgrade for viewing images.
 
 **Planned data model (photo app)**
 

@@ -250,6 +250,67 @@ Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `
 
 `GET /hello` has **no** authorizer (health check).
 
+### What is `sub`? (and `ownerId`) {#what-is-sub}
+
+When a user signs in, Cognito returns a **JWT** (JSON Web Token). A JWT is a signed blob of **claims** — name/value pairs about the user. One standard claim is **`sub`**.
+
+| Term | Meaning |
+| ---- | ------- |
+| **`sub`** | **Subject** — the unique, stable **user id** inside this Cognito User Pool. From the JWT claim named `sub`. |
+| **`ownerId`** | **Our app’s name** for that same value when we store it in DynamoDB or build S3 paths. In code we set `ownerId = sub`. |
+
+They are the **same id**; we say `ownerId` in the photo domain (“who owns this row?”) and `sub` when talking about the token.
+
+#### Example IdToken claims (simplified)
+
+After sign-in, the decoded JWT payload includes claims like:
+
+```json
+{
+  "sub": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "email": "you@example.com",
+  "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_XXXXX",
+  "aud": "your-app-client-id",
+  "exp": 1710000000
+}
+```
+
+| Claim | Role |
+| ----- | ---- |
+| **`sub`** | **Who is logged in** — use this to scope data. Never changes for that user in this pool. |
+| `email` | Human-readable login; can change; **do not** use as the only primary key for ownership. |
+| `iss` | Issuer — API Gateway checks it matches your User Pool. |
+| `aud` | Audience — must match your **User Pool Client** id. |
+| `exp` | Expiry — token invalid after this time. |
+
+`sub` often looks like a UUID (e.g. `a1b2c3d4-e5f6-...`). It is **not** the user’s email.
+
+#### Why we use `sub` as `ownerId` (step 8)
+
+| Without `sub` | With `sub` → `ownerId` |
+| ------------- | ---------------------- |
+| `GET /photos` could return **everyone’s** photos (global Scan) | `GET /photos` returns **only this user’s** rows (`Query` on GSI `byOwner`) |
+| Anyone could guess another user’s `s3Key` | Keys are under `users/{sub}/photos/...`; `create` rejects keys for another `sub` |
+| Tying data to email breaks if the user changes email | `sub` stays the same for the life of the account in that pool |
+
+The client **cannot** choose `ownerId` in the request body. Lambda reads it from the token API Gateway already validated:
+
+```text
+Authorization: Bearer <IdToken>
+  → API Gateway checks signature / iss / aud / exp
+  → Lambda: event.requestContext.authorizer.jwt.claims.sub
+  → src/auth.ts: getOwnerId() / requireOwnerId()
+  → photos.ts: ownerId on PutItem; Query byOwner; s3Key prefix users/{ownerId}/photos/
+```
+
+```ts
+// src/auth.ts — sub from the JWT, exposed as ownerId to the rest of the app
+const sub = event.requestContext.authorizer.jwt.claims.sub;
+// same value stored on each photo row as ownerId
+```
+
+**Rule of thumb:** **`sub` = Cognito’s user id in the token.** **`ownerId` = that id in your database and S3 layout.**
+
 ### Cognito User Pool vs User Pool Client {#cognito-user-pool-vs-client}
 
 Think of Cognito as **two layers**: a directory of users, and an **app registration** that is allowed to talk to that directory.
@@ -746,6 +807,7 @@ Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serv
 | Cognito & JWT (steps 6–8)          | [Below](#cognito--jwt-auth-steps-68)         |
 | Cognito User Pool vs Client        | [Below](#cognito-user-pool-vs-client)          |
 | Cognito wiring in `serverless.yml` | [Below](#cognito-wiring-in-serverlessyml)    |
+| What is JWT `sub` / `ownerId`?     | [Below](#what-is-sub)                        |
 | Authenticated React / Amplify flow | [Below](#authenticated-react--amplify-flow) |
 | CloudWatch (debugging endpoints)    | [Below](#cloudwatch-debugging-endpoints)   |
 | CORS                                | [Below](#cors)                             |

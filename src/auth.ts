@@ -16,7 +16,10 @@ type JwtAuthorizerContext = {
 };
 
 /**
- * Cognito user id from JWT `sub` claim.
+ * Cognito user id from JWT `sub` (subject) claim.
+ *
+ * `sub` is the stable per-user id in the User Pool. We use it as `ownerId` in DynamoDB/S3.
+ * See README: "What is sub? (and ownerId)".
  *
  * @returns `sub` string, or `null` if missing (should not happen when route uses JWT authorizer)
  */

@@ -250,6 +250,167 @@ Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `
 
 `GET /hello` has **no** authorizer (health check).
 
+### Cognito User Pool vs User Pool Client {#cognito-user-pool-vs-client}
+
+Think of Cognito as **two layers**: a directory of users, and an **app registration** that is allowed to talk to that directory.
+
+```mermaid
+flowchart TB
+  subgraph pool [Cognito User Pool — CognitoUserPool]
+    U1[User: you@example.com]
+    U2[User: other@example.com]
+    PWD[Passwords / sign-up rules]
+    JWT[Issues JWTs after sign-in]
+  end
+
+  subgraph client [User Pool Client — CognitoUserPoolClient]
+    SPA[Your React SPA]
+    FLOWS[Allowed auth flows]
+  end
+
+  SPA -->|signUp / signIn| client
+  client --> pool
+  pool -->|IdToken JWT| SPA
+  SPA -->|Authorization Bearer IdToken| API[HTTP API + JWT authorizer]
+```
+
+#### `CognitoUserPool` (User Pool)
+
+| | |
+| - | - |
+| **What it is** | The **user directory** for your app: accounts, passwords, email verification, token signing. |
+| **In this repo** | CloudFormation resource `CognitoUserPool` in `serverless.yml` |
+| **Analogy** | The “database of users” — not your DynamoDB photo table, but **who can log in**. |
+| **You get** | After sign-in, Cognito issues **JWTs** (we use the **IdToken**). The token’s **`sub`** claim is a stable user id (used as `ownerId` in DynamoDB). |
+| **This pool uses** | **Email** as username (`UsernameAttributes: email`), auto-verified email, password policy (8+ chars, upper, lower, number). |
+
+Users are created with `sign-up` (CLI or Amplify). You do **not** store passwords in Lambda or DynamoDB.
+
+#### `CognitoUserPoolClient` (App client)
+
+| | |
+| - | - |
+| **What it is** | A **public client** record that represents *your frontend app* (browser / React). It defines **how** the app may authenticate against the pool. |
+| **In this repo** | `CognitoUserPoolClient`, linked to the pool via `UserPoolId: !Ref CognitoUserPool` |
+| **Analogy** | An “app id” in front of the user pool — same pool can have multiple clients (iOS, web, admin) with different settings. |
+| **`GenerateSecret: false`** | Required for SPAs. Browsers cannot keep a client secret. (Secrets are for server-side apps only.) |
+| **`ExplicitAuthFlows`** | `USER_PASSWORD_AUTH` (CLI/testing), `USER_SRP_AUTH` (Amplify default), `REFRESH_TOKEN_AUTH` (stay logged in). |
+| **Deploy output** | **`UserPoolClientId`** — this is the JWT **`aud` (audience)** API Gateway checks. |
+
+**User Pool** = who users are. **User Pool Client** = which app is asking and which login methods are allowed.
+
+**Not in this repo (step 9):** **Identity Pool** — temporary **AWS access keys** for direct S3 from the browser. We use **presigned URLs** + API JWTs instead.
+
+### Wiring Cognito in `serverless.yml` {#cognito-wiring-in-serverlessyml}
+
+Cognito is connected in **four places**: CloudFormation **resources**, HTTP API **JWT authorizer**, **function events**, and **outputs**.
+
+```text
+resources (pool + client)
+       ↓ issuer + audience
+provider.httpApi.authorizers.cognitoJwt
+       ↓ authorizer: cognitoJwt
+functions: /photos* routes
+       ↓
+API Gateway validates JWT → Lambda reads event.requestContext.authorizer.jwt.claims.sub
+```
+
+#### 1. Resources — create pool and client
+
+```yaml
+resources:
+  Resources:
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:service}-${sls:stage}-users
+        UsernameAttributes: [email]
+        AutoVerifiedAttributes: [email]
+        Policies:
+          PasswordPolicy: { ... }
+
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:service}-${sls:stage}-spa
+        UserPoolId: !Ref CognitoUserPool
+        GenerateSecret: false
+        ExplicitAuthFlows:
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_USER_SRP_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+```
+
+| Property | Why |
+| -------- | --- |
+| `UsernameAttributes: email` | Users sign in with email, not a separate username. |
+| `GenerateSecret: false` | SPA-safe; no embedded secret in React. |
+| `PreventUserExistenceErrors: ENABLED` | Same error for “user not found” vs “wrong password” (slightly better security). |
+
+#### 2. JWT authorizer — API Gateway checks tokens (step 7)
+
+Under `provider.httpApi`:
+
+```yaml
+authorizers:
+  cognitoJwt:
+    type: jwt
+    identitySource: $request.header.Authorization
+    issuerUrl: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}
+    audience:
+      - !Ref CognitoUserPoolClient
+```
+
+| Piece | Role |
+| ----- | ---- |
+| `type: jwt` | HTTP API validates a **Bearer JWT** before invoking Lambda. |
+| `identitySource` | Read token from `Authorization: Bearer <IdToken>`. |
+| `issuerUrl` | Must match token **`iss`** — proves Cognito signed it. Built from **User Pool id**. |
+| `audience` | Must match token **`aud`** — proves token was issued for **this app client**. Use **`UserPoolClientId`** (`!Ref CognitoUserPoolClient`). |
+
+Invalid or missing tokens → **401** from API Gateway (Lambda never runs).
+
+#### 3. Attach authorizer to routes
+
+```yaml
+createPhoto:
+  events:
+    - httpApi:
+        path: /photos
+        method: POST
+        authorizer:
+          name: cognitoJwt   # must match provider.httpApi.authorizers key
+```
+
+Same for `GET /photos` and `POST /photos/upload-url`. **`hello`** has **no** `authorizer` — stays public.
+
+#### 4. Environment variables and outputs (for frontends / debugging)
+
+```yaml
+provider:
+  environment:
+    COGNITO_USER_POOL_ID: !Ref CognitoUserPool
+    COGNITO_CLIENT_ID: !Ref CognitoUserPoolClient
+
+resources:
+  Outputs:
+    UserPoolId:
+      Value: !Ref CognitoUserPool
+    UserPoolClientId:
+      Value: !Ref CognitoUserPoolClient
+    CognitoIssuer:
+      Value: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}
+```
+
+| Output / env | Use |
+| ------------ | --- |
+| `UserPoolId` | `VITE_USER_POOL_ID` in React / Amplify |
+| `UserPoolClientId` | `VITE_USER_POOL_CLIENT_ID` in React / Amplify |
+| `CognitoIssuer` | Must match JWT authorizer `issuerUrl` (debugging) |
+| `HttpApiUrl` | From **Serverless** automatically (do not duplicate in `Outputs`) — API base URL |
+
+Lambda does **not** verify JWTs itself for protected routes; API Gateway does. `src/auth.ts` only reads **`sub`** from claims the authorizer already validated.
+
 ### JWT request flow
 
 ```mermaid
@@ -514,8 +675,9 @@ User pool + SPA app client; sign up / sign in; obtain **IdToken** JWTs. See [Cog
 
 ## Cognito in one line
 
-- **User Pool:** who the user is (accounts + **JWTs**).
-- **Identity Pool (optional, later):** temporary **AWS credentials** for that user (often for direct S3 from the browser).
+- **User Pool (`CognitoUserPool`):** who the user is (accounts + **JWTs**). See [Cognito User Pool vs Client](#cognito-user-pool-vs-client).
+- **User Pool Client (`CognitoUserPoolClient`):** your SPA’s app id + allowed login flows; JWT **audience** for API Gateway.
+- **Identity Pool (optional, step 9):** temporary **AWS credentials** for that user (often for direct S3 from the browser)—**not** used in this repo yet.
 
 ## Hygiene on shared accounts
 
@@ -539,6 +701,8 @@ Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serv
 | S3 presigned URLs (upload signing) | [Below](#s3-presigned-urls-how-upload-signing-works) |
 | React / Amplify client upload flow | [Below](#react-amplify-client-flow)        |
 | Cognito & JWT (steps 6–8)          | [Below](#cognito--jwt-auth-steps-68)         |
+| Cognito User Pool vs Client        | [Below](#cognito-user-pool-vs-client)          |
+| Cognito wiring in `serverless.yml` | [Below](#cognito-wiring-in-serverlessyml)    |
 | Authenticated React / Amplify flow | [Below](#authenticated-react--amplify-flow) |
 | CloudWatch (debugging endpoints)    | [Below](#cloudwatch-debugging-endpoints)   |
 | CORS                                | [Below](#cors)                             |

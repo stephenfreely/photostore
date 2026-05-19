@@ -166,9 +166,7 @@ resources:
               MaxAge: 3000
 
   Outputs:
-    HttpApiUrl:
-      Description: HTTP API base URL (no trailing slash)
-      Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+    # Do not define HttpApiUrl here — Serverless already outputs it for httpApi (duplicate name breaks deploy).
     UserPoolId:
       Value: !Ref CognitoUserPool
     UserPoolClientId:

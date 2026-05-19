@@ -46,7 +46,7 @@ curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello"
 
 After `npx serverless deploy`, note **Outputs**: `UserPoolId`, `UserPoolClientId`, `HttpApiUrl`, `CognitoIssuer`.
 
-### Photo upload flow (steps 5 + 7–8) {#photo-upload-flow-steps-5--78}
+### Photo upload flow (steps 5 + 7–8)
 
 Photo routes require **`Authorization: Bearer <IdToken>`** (Cognito). `GET /hello` stays public.
 
@@ -118,7 +118,7 @@ uploadUrl  →  (client PUT S3)  →  create
 - **`uploadUrl`** — S3 presigning only; does not write DynamoDB or receive file bytes.
 - **`create`** — DynamoDB only; assumes the object already exists at `s3Key`. Skipping step 3 leaves an orphan file in S3 with no row in `GET /photos`.
 
-### React / Amplify client flow {#react-amplify-client-flow}
+### React / Amplify client flow
 
 A browser app (including **Amplify Hosting + React**) uses the same three HTTP steps as `curl`. Only **two** requests hit your API; the file goes **directly to S3**.
 
@@ -238,7 +238,7 @@ Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `
 
 ---
 
-## Cognito & JWT auth (steps 6–8) {#cognito--jwt-auth-steps-68}
+## Cognito & JWT auth (steps 6–8)
 
 ### What was added
 
@@ -250,7 +250,7 @@ Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `
 
 `GET /hello` has **no** authorizer (health check).
 
-### What is `sub`? (and `ownerId`) {#what-is-sub}
+### What is `sub`? (and `ownerId`)
 
 When a user signs in, Cognito returns a **JWT** (JSON Web Token). A JWT is a signed blob of **claims** — name/value pairs about the user. One standard claim is **`sub`**.
 
@@ -311,7 +311,7 @@ const sub = event.requestContext.authorizer.jwt.claims.sub;
 
 **Rule of thumb:** **`sub` = Cognito’s user id in the token.** **`ownerId` = that id in your database and S3 layout.**
 
-### Cognito User Pool vs User Pool Client {#cognito-user-pool-vs-client}
+### Cognito User Pool vs User Pool Client
 
 Think of Cognito as **two layers**: a directory of users, and an **app registration** that is allowed to talk to that directory.
 
@@ -362,7 +362,7 @@ Users are created with `sign-up` (CLI or Amplify). You do **not** store password
 
 **Not in this repo (step 9):** **Identity Pool** — temporary **AWS access keys** for direct S3 from the browser. We use **presigned URLs** + API JWTs instead.
 
-### Wiring Cognito in `serverless.yml` {#cognito-wiring-in-serverlessyml}
+### Wiring Cognito in `serverless.yml`
 
 Cognito is connected in **four places**: CloudFormation **resources**, HTTP API **JWT authorizer**, **function events**, and **outputs**.
 
@@ -540,7 +540,7 @@ API Gateway validates the JWT **before** Lambda runs. Handlers read `sub` via `s
 | Expired or wrong-pool token | **401** | `iss` / `aud` / expiry failed |
 | Valid token, wrong `s3Key` on `POST /photos` | **403** | JWT OK; Lambda rejected key not under `users/{sub}/` |
 
-### Authenticated React / Amplify flow {#authenticated-react--amplify-flow}
+### Authenticated React / Amplify flow
 
 Install in your React app:
 
@@ -779,7 +779,7 @@ User pool + SPA app client; sign up / sign in; obtain **IdToken** JWTs. See [Cog
 
 ## Cognito in one line
 
-- **User Pool (`CognitoUserPool`):** who the user is (accounts + **JWTs**). See [Cognito User Pool vs Client](#cognito-user-pool-vs-client).
+- **User Pool (`CognitoUserPool`):** who the user is (accounts + **JWTs**). See [Cognito User Pool vs Client](#cognito-user-pool-vs-user-pool-client).
 - **User Pool Client (`CognitoUserPoolClient`):** your SPA’s app id + allowed login flows; JWT **audience** for API Gateway.
 - **Identity Pool (optional, step 9):** temporary **AWS credentials** for that user (often for direct S3 from the browser)—**not** used in this repo yet.
 
@@ -803,11 +803,11 @@ Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serv
 | DynamoDB wiring in `serverless.yml` | [Below](#dynamodb-wiring-in-serverlessyml) |
 | S3 wiring in `serverless.yml`     | [Below](#s3-wiring-in-serverlessyml)       |
 | S3 presigned URLs (upload signing) | [Below](#s3-presigned-urls-how-upload-signing-works) |
-| React / Amplify client upload flow | [Below](#react-amplify-client-flow)        |
+| React / Amplify client upload flow | [Below](#react--amplify-client-flow)        |
 | Cognito & JWT (steps 6–8)          | [Below](#cognito--jwt-auth-steps-68)         |
-| Cognito User Pool vs Client        | [Below](#cognito-user-pool-vs-client)          |
-| Cognito wiring in `serverless.yml` | [Below](#cognito-wiring-in-serverlessyml)    |
-| What is JWT `sub` / `ownerId`?     | [Below](#what-is-sub)                        |
+| Cognito User Pool vs Client        | [Below](#cognito-user-pool-vs-user-pool-client)          |
+| Cognito wiring in `serverless.yml` | [Below](#wiring-cognito-in-serverlessyml)    |
+| What is JWT `sub` / `ownerId`?     | [Below](#what-is-sub-and-ownerid)                        |
 | Authenticated React / Amplify flow | [Below](#authenticated-react--amplify-flow) |
 | CloudWatch (debugging endpoints)    | [Below](#cloudwatch-debugging-endpoints)   |
 | CORS                                | [Below](#cors)                             |
@@ -1394,7 +1394,7 @@ Do **not** store large images in DynamoDB or in the Lambda package.
 5. View image: presigned GET to S3, or CloudFront signed URL (stretch — step 9)
 ```
 
-See [Photo upload flow](#photo-upload-flow-step-5) for `curl` examples.
+See [Photo upload flow](#photo-upload-flow-steps-5--78) for `curl` examples.
 
 API Gateway has a **~10 MB** payload limit; direct-to-S3 upload avoids that and reduces Lambda memory/time.
 

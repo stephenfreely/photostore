@@ -48,6 +48,28 @@ curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello"
 
 After `npx serverless deploy`, note **Outputs**: `UserPoolId`, `UserPoolClientId`, `HttpApiUrl`, `CognitoIssuer`.
 
+### Source layout (`src/`)
+
+Handlers, shared helpers, and AWS clients are separated so new routes and domains have a clear home:
+
+```text
+src/
+  handlers/          # Lambda entry points (thin: parse event → respond)
+    hello.ts         # GET /hello
+    photos.ts        # POST /photos/upload-url, POST /photos, GET /photos
+  lib/               # Cross-cutting helpers (no AWS SDK)
+    auth.ts          # JWT claims → ownerId
+    http.ts          # JSON responses, body parsing
+  clients/           # AWS SDK wrappers (reused clients, env config)
+    dynamo.ts
+    s3.ts
+  schemas/           # Zod request validation
+    photos.ts
+    upload.ts
+```
+
+When you add a new domain (e.g. albums), add `handlers/albums.ts` plus any `schemas/albums.ts`. Put new AWS services under `clients/`.
+
 ### Photo upload flow (steps 5 + 7–8)
 
 Photo routes require **`Authorization: Bearer <IdToken>`** (Cognito). `GET /hello` stays public.
@@ -102,9 +124,9 @@ curl -s -o /dev/null -w "%{http_code}\n" "$API/photos"
 
 #### Handlers and routes (same upload flow)
 
-One user journey, **three HTTP steps**, **two API Lambdas** in `src/photos.ts`. Step 2 has no Lambda—the client talks to S3 directly.
+One user journey, **three HTTP steps**, **two API Lambdas** in `src/handlers/photos.ts`. Step 2 has no Lambda—the client talks to S3 directly.
 
-| Step | Route | `serverless.yml` function | Handler (`src/photos.ts`) | What it does |
+| Step | Route | `serverless.yml` function | Handler (`src/handlers/photos.ts`) | What it does |
 | ---- | ----- | ------------------------- | ------------------------- | ------------ |
 | **1** | `POST /photos/upload-url` | `uploadPhotoUrl` | `uploadUrl` | Presign S3 `PUT`; return `photoId`, `s3Key`, `uploadUrl` |
 | **2** | `PUT` presigned URL | — | — | Client uploads file bytes to **S3** (not API Gateway) |
@@ -230,7 +252,7 @@ export async function uploadPhoto(file: File, caption: string) {
 
 **Note:** This example is **pre-auth** (step 5). For Cognito + JWT use [Authenticated React / Amplify flow](#authenticated-react--amplify-flow).
 
-Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `image/jpeg`). Presigned URLs expire after **5 minutes** (`UPLOAD_URL_EXPIRES_SECONDS` in `src/s3.ts`).
+Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `image/jpeg`). Presigned URLs expire after **5 minutes** (`UPLOAD_URL_EXPIRES_SECONDS` in `src/clients/s3.ts`).
 
 **How presigning works:** [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works) (recommended read after your first successful upload).
 
@@ -314,12 +336,12 @@ The client **cannot** choose `ownerId` in the request body. Lambda reads it from
 Authorization: Bearer <IdToken>
   → API Gateway checks signature / iss / aud / exp
   → Lambda: event.requestContext.authorizer.jwt.claims.sub
-  → src/auth.ts: getOwnerId() / requireOwnerId()
-  → photos.ts: ownerId on PutItem; Query byOwner; s3Key prefix users/{ownerId}/photos/
+  → src/lib/auth.ts: getOwnerId() / requireOwnerId()
+  → src/handlers/photos.ts: ownerId on PutItem; Query byOwner; s3Key prefix users/{ownerId}/photos/
 ```
 
 ```ts
-// src/auth.ts — sub from the JWT, exposed as ownerId to the rest of the app
+// src/lib/auth.ts — sub from the JWT, exposed as ownerId to the rest of the app
 const sub = event.requestContext.authorizer.jwt.claims.sub;
 // same value stored on each photo row as ownerId
 ```
@@ -485,7 +507,7 @@ resources:
 | `CognitoIssuer` | Must match JWT authorizer `issuerUrl` (debugging) |
 | `HttpApiUrl` | From **Serverless** automatically (do not duplicate in `Outputs`) — API base URL |
 
-Lambda does **not** verify JWTs itself for protected routes; API Gateway does. `src/auth.ts` only reads **`sub`** from claims the authorizer already validated.
+Lambda does **not** verify JWTs itself for protected routes; API Gateway does. `src/lib/auth.ts` only reads **`sub`** from claims the authorizer already validated.
 
 ### JWT request flow
 
@@ -510,7 +532,7 @@ sequenceDiagram
   end
 ```
 
-API Gateway validates the JWT **before** Lambda runs. Handlers read `sub` via `src/auth.ts` as `ownerId`.
+API Gateway validates the JWT **before** Lambda runs. Handlers read `sub` via `src/lib/auth.ts` as `ownerId`.
 
 #### JWT request checklist
 
@@ -1032,7 +1054,7 @@ provider:
     cors: true
 functions:
   hello:
-    handler: src/handler.hello
+    handler: src/handlers/hello.hello
     events:
       - httpApi:
           path: /hello
@@ -1048,7 +1070,7 @@ Client (curl, browser, app)
   → HTTPS GET https://<api-id>.execute-api.us-east-1.amazonaws.com/hello
   → API Gateway HTTP API (TLS termination, route match)
   → Lambda Invoke (photostore-learn-dev-hello)
-  → src/handler.hello(event) runs in Node 20
+  → src/handlers/hello.hello(event) runs in Node 20
   → returns { statusCode, headers, body }
   → API Gateway maps that to HTTP response
   → Client receives JSON
@@ -1066,7 +1088,7 @@ Lambda does not write to the socket directly. It must return:
 }
 ```
 
-`src/handler.ts` also echoes parts of `event` so you can see what API Gateway passed in.
+`src/handlers/hello.ts` also echoes parts of `event` so you can see what API Gateway passed in.
 
 **HTTP API event (payload format 2.0)—fields used in this repo**
 
@@ -1137,7 +1159,7 @@ iam:
 | `PHOTOS_TABLE`     | Environment variable injected into **every** function in this service (`hello`, `createPhoto`, `listPhotos`).                            |
 | `!Ref PhotosTable` | CloudFormation intrinsic: resolves to the **table name** string (e.g. `photostore-learn-dev-photos` from `TableName` under `resources`). |
 
-In code, `src/dynamo.ts` reads it:
+In code, `src/clients/dynamo.ts` reads it:
 
 ```ts
 process.env.PHOTOS_TABLE; // → "photostore-learn-dev-photos"
@@ -1183,7 +1205,7 @@ If IAM were too broad (e.g. `dynamodb:*` on `*`), a bug or compromise in Lambda 
 - **PK:** `photoId` (string)
 - **GSI `byOwner`:** `ownerId` (HASH) + `createdAt` (RANGE) — list “my photos” via `Query`
 
-Items in `src/photos.ts`: `photoId`, `ownerId`, `s3Key`, `caption`, `createdAt`.
+Items in `src/handlers/photos.ts`: `photoId`, `ownerId`, `s3Key`, `caption`, `createdAt`.
 
 ### S3 wiring in `serverless.yml`
 
@@ -1205,7 +1227,7 @@ Items in `src/photos.ts`: `photoId`, `ownerId`, `s3Key`, `caption`, `createdAt`.
 | Piece            | Meaning                                                                 |
 | ---------------- | ----------------------------------------------------------------------- |
 | `PHOTOS_BUCKET`  | Injected into Lambdas; `!Ref PhotosBucket` resolves to the bucket name |
-| `src/s3.ts`      | `photosBucketName()` reads `process.env.PHOTOS_BUCKET`                  |
+| `src/clients/s3.ts` | `photosBucketName()` reads `process.env.PHOTOS_BUCKET`                  |
 
 **IAM (Lambda execution role)**
 
@@ -1298,7 +1320,7 @@ https://<bucket>.s3.<region>.amazonaws.com/photos/<photoId>.jpg
 | Piece | Meaning |
 | ----- | ------- |
 | Path | Exact **object key** (`photos/{photoId}.jpg`) — client cannot change key without invalidating the signature |
-| `X-Amz-Expires` | Lifetime in seconds (this repo: **300** = 5 minutes, see `UPLOAD_URL_EXPIRES_SECONDS` in `src/s3.ts`) |
+| `X-Amz-Expires` | Lifetime in seconds (this repo: **300** = 5 minutes, see `UPLOAD_URL_EXPIRES_SECONDS` in `src/clients/s3.ts`) |
 | `X-Amz-SignedHeaders` | Headers that must match on the real `PUT` (here: **`host`** and **`content-type`**) |
 | `X-Amz-Signature` | Cryptographic proof that something with `s3:PutObject` on this object created the URL |
 
@@ -1306,7 +1328,7 @@ If the client changes the key, uses `POST` instead of `PUT`, sends the wrong `Co
 
 #### What this repo signs (code)
 
-In `src/photos.ts`, `uploadUrl` builds a **`PutObject`** command and passes it to the presigner:
+In `src/handlers/photos.ts`, `uploadUrl` builds a **`PutObject`** command and passes it to the presigner:
 
 ```ts
 await getSignedUrl(
@@ -1442,12 +1464,12 @@ aws logs tail "/aws/lambda/photostore-learn-dev-hello" --follow
 3. Open the Lambda log group or run `npx serverless logs -f hello -t`.
 4. Check:
    - **No log line** → wrong URL/stage, or deploy did not update the function you think it did.
-   - **Error stack / `Task timed out`** → exception or timeout in `src/handler.ts`.
+   - **Error stack / `Task timed out`** → exception or timeout in `src/handlers/hello.ts`.
    - **Your `console.log` output** → path, query string, custom fields you added.
 
 **Add logging in the handler**
 
-Anything you log from `src/handler.ts` appears in CloudWatch. Example:
+Anything you log from `src/handlers/hello.ts` appears in CloudWatch. Example:
 
 ```ts
 console.log("hello request", {

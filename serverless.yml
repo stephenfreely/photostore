@@ -52,14 +52,14 @@ provider:
 
 functions:
   hello:
-    handler: src/handler.hello
+    handler: src/handlers/hello.hello
     events:
       - httpApi:
           path: /hello
           method: GET
 
   createPhoto:
-    handler: src/photos.create
+    handler: src/handlers/photos.create
     events:
       - httpApi:
           path: /photos
@@ -68,7 +68,7 @@ functions:
             name: cognitoJwt
 
   listPhotos:
-    handler: src/photos.list
+    handler: src/handlers/photos.list
     events:
       - httpApi:
           path: /photos
@@ -77,7 +77,7 @@ functions:
             name: cognitoJwt
 
   uploadPhotoUrl:
-    handler: src/photos.uploadUrl
+    handler: src/handlers/photos.uploadUrl
     events:
       - httpApi:
           path: /photos/upload-url

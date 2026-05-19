@@ -14,21 +14,21 @@ import type {
   APIGatewayProxyEventV2,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
-import {
-  isS3KeyOwnedBy,
-  requireOwnerId,
-  s3KeyPrefixForOwner,
-} from "./auth";
-import { docClient, photosTableName } from "./dynamo";
-import { json, parseJsonBody } from "./http";
-import { createPhotoBodySchema, zodErrorMessage } from "./schemas/photos";
-import { uploadUrlBodySchema } from "./schemas/upload";
+import { docClient, photosTableName } from "../clients/dynamo";
 import {
   extensionForContentType,
   photosBucketName,
   s3Client,
   UPLOAD_URL_EXPIRES_SECONDS,
-} from "./s3";
+} from "../clients/s3";
+import {
+  isS3KeyOwnedBy,
+  requireOwnerId,
+  s3KeyPrefixForOwner,
+} from "../lib/auth";
+import { json, parseJsonBody } from "../lib/http";
+import { createPhotoBodySchema, zodErrorMessage } from "../schemas/photos";
+import { uploadUrlBodySchema } from "../schemas/upload";
 
 /** GSI name for listing photos by owner (see `serverless.yml`). */
 const BY_OWNER_INDEX = "byOwner";

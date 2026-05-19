@@ -436,6 +436,49 @@ sequenceDiagram
 
 API Gateway validates the JWT **before** Lambda runs. Handlers read `sub` via `src/auth.ts` as `ownerId`.
 
+#### JWT request checklist
+
+**Phase A — Sign in (Cognito only; no Lambda, no API Gateway)**
+
+| Step | From | To | Method / action | What happens |
+| ---- | ---- | -- | --------------- | ------------ |
+| A1 | Client (React / CLI) | **Cognito User Pool** | `signUp` or admin create user | Account created in the pool |
+| A2 | Client | **Cognito** | `signIn` (email + password) | Cognito checks credentials |
+| A3 | Cognito | Client | — | Returns tokens; you use **`IdToken`** for the API |
+| A4 | Client | — | Store `IdToken` | e.g. Amplify session; refresh via `REFRESH_TOKEN_AUTH` |
+
+**Phase B — Call a protected route (e.g. `POST /photos/upload-url`)**
+
+| Step | From | To | Method | Headers / body | Result |
+| ---- | ---- | -- | ------ | -------------- | ------ |
+| B1 | Client | **HTTP API** | `POST` | `Authorization: Bearer <IdToken>`<br/>`Content-Type: application/json`<br/>body per route | Request hits API Gateway |
+| B2 | **API Gateway** | — | JWT authorizer (`cognitoJwt`) | Checks `iss`, `aud`, signature, expiry | **401** if invalid/missing |
+| B3 | API Gateway | **Lambda** | invoke | `event.requestContext.authorizer.jwt.claims` (includes **`sub`**) | Handler runs |
+| B4 | Lambda | Client | HTTP response | JSON body (e.g. presigned URL) | **200** / **4xx** / **5xx** |
+
+**Phase B for each photo route**
+
+| Step | Route | Lambda handler | Lambda uses `sub` for |
+| ---- | ----- | -------------- | --------------------- |
+| B1–B4 | `POST /photos/upload-url` | `uploadUrl` | S3 key `users/{sub}/photos/{id}.jpg` |
+| B1–B4 | `POST /photos` | `create` | `ownerId` on DynamoDB row; validates `s3Key` prefix |
+| B1–B4 | `GET /photos` | `list` | `Query` GSI `byOwner` where `ownerId = sub` |
+
+**Public route (no JWT)**
+
+| Step | From | To | Method | Auth |
+| ---- | ---- | -- | ------ | ---- |
+| — | Client | HTTP API | `GET /hello` | **None** — no `Authorization` header; Lambda runs without authorizer |
+
+**Quick checks**
+
+| You send | You get | Meaning |
+| -------- | ------- | ------- |
+| No `Authorization` on `/photos` | **401** | Authorizer blocked the request |
+| Valid `Bearer <IdToken>` | **200** / **201** | Token OK; Lambda ran |
+| Expired or wrong-pool token | **401** | `iss` / `aud` / expiry failed |
+| Valid token, wrong `s3Key` on `POST /photos` | **403** | JWT OK; Lambda rejected key not under `users/{sub}/` |
+
 ### Authenticated React / Amplify flow {#authenticated-react--amplify-flow}
 
 Install in your React app:

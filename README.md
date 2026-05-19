@@ -1,6 +1,6 @@
 # photostore-learn
 
-AWS Serverless learning project: **Lambda**, **API Gateway (HTTP API)**, **DynamoDB**, **S3**, and **Amazon Cognito**—step by step. **Cognito / auth (steps 6–8)** are not implemented yet.
+AWS Serverless learning project: **Lambda**, **API Gateway (HTTP API)**, **DynamoDB**, **S3**, and **Amazon Cognito**—step by step through **step 8** (identity, JWT authorizer, per-user photos). Stretch goals (step 9) are optional.
 
 ## Prerequisites
 
@@ -31,26 +31,50 @@ curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello"
 - **Service:** `photostore-learn` (see `serverless.yml`)
 - **Stage:** `dev` (default)
 - **Lambdas:** `hello`, `createPhoto`, `listPhotos`, `uploadPhotoUrl` (TypeScript in `src/`, bundled with esbuild)
+- **Cognito:** User Pool + SPA app client (email sign-in) — [Cognito & JWT auth](#cognito--jwt-auth-steps-68)
 - **API (HTTP API, CORS enabled):**
 
-  | Method | Path                   | Handler              |
-  | ------ | ---------------------- | -------------------- |
-  | `GET`  | `/hello`               | health / event echo  |
-  | `POST` | `/photos/upload-url`   | presigned S3 PUT URL |
-  | `POST` | `/photos`              | save metadata        |
-  | `GET`  | `/photos`              | list metadata        |
+  | Method | Path                   | Auth            | Handler              |
+  | ------ | ---------------------- | --------------- | -------------------- |
+  | `GET`  | `/hello`               | public          | health / event echo  |
+  | `POST` | `/photos/upload-url`   | JWT (Cognito)   | presigned S3 PUT URL |
+  | `POST` | `/photos`              | JWT (Cognito)   | save metadata        |
+  | `GET`  | `/photos`              | JWT (Cognito)   | **my** photos only   |
 
-- **DynamoDB:** `photostore-learn-dev-photos` (`photoId` partition key) — [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml)
-- **S3:** private photos bucket (SSE-S3, block public access, bucket CORS for browser PUT) — [S3 wiring](#s3-wiring-in-serverlessyml)
+- **DynamoDB:** `photostore-learn-dev-photos` — `photoId` PK, GSI `byOwner` (`ownerId` + `createdAt`) — [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml)
+- **S3:** private bucket; keys `users/{sub}/photos/{photoId}.jpg` — [S3 wiring](#s3-wiring-in-serverlessyml)
 
-### Photo upload flow (step 5)
+After `npx serverless deploy`, note **Outputs**: `UserPoolId`, `UserPoolClientId`, `HttpApiUrl`, `CognitoIssuer`.
 
-Use the HTTP API base URL from deploy output as `API`:
+### Photo upload flow (steps 5 + 7–8) {#photo-upload-flow-steps-5--78}
+
+Photo routes require **`Authorization: Bearer <IdToken>`** (Cognito). `GET /hello` stays public.
+
+Use deploy **Outputs** for `API`, `UserPoolId`, `UserPoolClientId`. Create a user once:
 
 ```bash
+aws cognito-idp sign-up \
+  --client-id "$CLIENT_ID" \
+  --username "you@example.com" \
+  --password 'YourPass1!' \
+  --user-attributes Name=email,Value=you@example.com
+
+aws cognito-idp admin-confirm-sign-up \
+  --user-pool-id "$USER_POOL_ID" \
+  --username "you@example.com"
+
+TOKEN=$(aws cognito-idp initiate-auth \
+  --auth-flow USER_PASSWORD_AUTH \
+  --client-id "$CLIENT_ID" \
+  --auth-parameters USERNAME=you@example.com,PASSWORD='YourPass1!' \
+  --query 'AuthenticationResult.IdToken' --output text)
+
+AUTH="Authorization: Bearer $TOKEN"
+
 # 1. Get presigned upload URL + photoId + s3Key
 curl -s -X POST "$API/photos/upload-url" \
   -H "content-type: application/json" \
+  -H "$AUTH" \
   -d '{"contentType":"image/jpeg"}' | tee /tmp/upload.json
 
 # 2. PUT image bytes directly to S3 (not through API Gateway)
@@ -62,11 +86,17 @@ PHOTO_ID=$(jq -r .photoId /tmp/upload.json)
 S3_KEY=$(jq -r .s3Key /tmp/upload.json)
 curl -s -X POST "$API/photos" \
   -H "content-type: application/json" \
+  -H "$AUTH" \
   -d "{\"photoId\":\"$PHOTO_ID\",\"s3Key\":\"$S3_KEY\",\"caption\":\"beach sunset\"}"
 
-# 4. List metadata
-curl -s "$API/photos"
+# 4. List my photos only
+curl -s -H "$AUTH" "$API/photos"
+
+# Without token → 401 from API Gateway
+curl -s -o /dev/null -w "%{http_code}\n" "$API/photos"
 ```
+
+`s3Key` from step 1 looks like `users/<cognito-sub>/photos/<uuid>.jpg`.
 
 #### Handlers and routes (same upload flow)
 
@@ -77,7 +107,7 @@ One user journey, **three HTTP steps**, **two API Lambdas** in `src/photos.ts`. 
 | **1** | `POST /photos/upload-url` | `uploadPhotoUrl` | `uploadUrl` | Presign S3 `PUT`; return `photoId`, `s3Key`, `uploadUrl` |
 | **2** | `PUT` presigned URL | — | — | Client uploads file bytes to **S3** (not API Gateway) |
 | **3** | `POST /photos` | `createPhoto` | **`create`** | Validate body; **PutItem** metadata to DynamoDB |
-| *(list)* | `GET /photos` | `listPhotos` | `list` | **Scan** metadata (separate from upload; no S3) |
+| *(list)* | `GET /photos` | `listPhotos` | `list` | **Query** GSI `byOwner` = JWT `sub` (my photos only) |
 
 ```text
 uploadUrl  →  (client PUT S3)  →  create
@@ -118,7 +148,7 @@ sequenceDiagram
   API-->>React: 201 { photo }
   React-->>User: Success
 
-  Note over React,API: Later (step 7): add Authorization Bearer on both POSTs
+  Note over React,API: See Authenticated React flow for Bearer IdToken
   Note over React,S3: S3 PUT uses presigned URL host, not API Gateway
 ```
 
@@ -196,13 +226,235 @@ export async function uploadPhoto(file: File, caption: string) {
 }
 ```
 
-**Amplify notes:** You do **not** need Amplify **Storage** for this lesson—the app calls your custom API with `fetch`. Host the SPA on Amplify Hosting; put `VITE_API_URL` in branch env vars. After Cognito (steps 6–7), add `Authorization: Bearer <idToken>` on both API `POST`s in step 1 and 3 only.
+**Note:** This example is **pre-auth** (step 5). For Cognito + JWT use [Authenticated React / Amplify flow](#authenticated-react--amplify-flow).
 
 Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `image/jpeg`). Presigned URLs expire after **5 minutes** (`UPLOAD_URL_EXPIRES_SECONDS` in `src/s3.ts`).
 
 **How presigning works:** [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works) (recommended read after your first successful upload).
 
-**Next lesson step:** **6. Cognito User Pool** in the [learning path](#learning-path-recommended-order) — identity and JWTs before protecting routes.
+**Auth & React:** [Cognito & JWT auth](#cognito--jwt-auth-steps-68) · [Authenticated React / Amplify flow](#authenticated-react--amplify-flow)
+
+**Next lesson step:** **9. Optional stretch goals** in the [learning path](#learning-path-recommended-order) (presigned GET, CloudFront, Identity Pool).
+
+---
+
+## Cognito & JWT auth (steps 6–8) {#cognito--jwt-auth-steps-68}
+
+### What was added
+
+| Step | Idea | In this repo |
+| ---- | ---- | ------------- |
+| **6** | Cognito User Pool + app client | `CognitoUserPool`, `CognitoUserPoolClient` in `serverless.yml` |
+| **7** | JWT authorizer on HTTP API | `cognitoJwt` on `/photos*`; `401` without valid `Authorization: Bearer` |
+| **8** | `ownerId` from JWT `sub` | `ownerId` on items; S3 keys under `users/{sub}/`; `GET /photos` uses GSI `byOwner` |
+
+`GET /hello` has **no** authorizer (health check).
+
+### JWT request flow
+
+```mermaid
+sequenceDiagram
+  participant Client
+  participant Cognito as Cognito User Pool
+  participant GW as HTTP API
+  participant Lambda
+  participant DDB as DynamoDB
+
+  Client->>Cognito: signIn (email + password)
+  Cognito-->>Client: IdToken (JWT)
+
+  Client->>GW: POST /photos/upload-url<br/>Authorization: Bearer IdToken
+  GW->>GW: Validate JWT (issuer, audience, expiry)
+  alt invalid / missing token
+    GW-->>Client: 401 Unauthorized
+  else valid
+    GW->>Lambda: event + jwt.claims (sub, email, …)
+    Lambda-->>Client: 200 presigned URL
+  end
+```
+
+API Gateway validates the JWT **before** Lambda runs. Handlers read `sub` via `src/auth.ts` as `ownerId`.
+
+### Authenticated React / Amplify flow {#authenticated-react--amplify-flow}
+
+Install in your React app:
+
+```bash
+npm install aws-amplify
+```
+
+Env (Vite example) — values from `npx serverless deploy` **Outputs**:
+
+```env
+VITE_API_URL=https://<api-id>.execute-api.us-east-1.amazonaws.com
+VITE_USER_POOL_ID=us-east-1_xxxx
+VITE_USER_POOL_CLIENT_ID=xxxxxxxx
+VITE_AWS_REGION=us-east-1
+```
+
+#### Configure Amplify Auth
+
+```ts
+// src/amplify.ts
+import { Amplify } from "aws-amplify";
+
+Amplify.configure({
+  Auth: {
+    Cognito: {
+      userPoolId: import.meta.env.VITE_USER_POOL_ID,
+      userPoolClientId: import.meta.env.VITE_USER_POOL_CLIENT_ID,
+    },
+  },
+});
+```
+
+#### Sequence: sign-in + upload (with JWT)
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant React as React app
+  participant Cognito
+  participant API as HTTP API + Lambda
+  participant S3
+  participant DDB as DynamoDB
+
+  User->>React: email + password
+  React->>Cognito: signIn
+  Cognito-->>React: session (IdToken)
+
+  User->>React: file + caption
+  React->>API: POST /photos/upload-url<br/>Bearer IdToken
+  API-->>React: photoId, s3Key, uploadUrl
+
+  React->>S3: PUT uploadUrl (file)
+  S3-->>React: 200
+
+  React->>API: POST /photos<br/>Bearer IdToken
+  API->>DDB: PutItem ownerId=sub
+  API-->>React: 201
+
+  React->>API: GET /photos<br/>Bearer IdToken
+  API->>DDB: Query byOwner=sub
+  API-->>React: items[]
+```
+
+#### Auth helper + API headers
+
+```ts
+// src/lib/apiAuth.ts
+import { fetchAuthSession } from "aws-amplify/auth";
+
+const API = import.meta.env.VITE_API_URL;
+
+/** Headers for protected photo routes (steps 7–8). */
+export async function authHeaders(): Promise<HeadersInit> {
+  const session = await fetchAuthSession();
+  const token = session.tokens?.idToken?.toString();
+  if (!token) throw new Error("Not signed in");
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+export { API };
+```
+
+#### Upload with JWT (full example)
+
+```ts
+// src/lib/uploadPhoto.ts
+import { signIn } from "aws-amplify/auth";
+import { API, authHeaders } from "./apiAuth";
+
+export async function signInUser(email: string, password: string) {
+  await signIn({ username: email, password });
+}
+
+export async function uploadPhoto(file: File, caption: string) {
+  const headers = await authHeaders();
+
+  const contentType =
+    file.type === "image/png"
+      ? "image/png"
+      : file.type === "image/webp"
+        ? "image/webp"
+        : "image/jpeg";
+
+  // Step 1: POST presign (JWT required) → uploadUrl Lambda
+  const signRes = await fetch(`${API}/photos/upload-url`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ contentType }),
+  });
+  if (!signRes.ok) throw new Error(await signRes.text());
+  const { photoId, s3Key, uploadUrl } = await signRes.json();
+
+  // Step 2: PUT to S3 (no JWT — presigned URL is the credential)
+  const putRes = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": contentType },
+    body: file,
+  });
+  if (!putRes.ok) throw new Error(await putRes.text());
+
+  // Step 3: POST metadata (JWT required) → create Lambda sets ownerId from sub
+  const metaRes = await fetch(`${API}/photos`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ photoId, s3Key, caption }),
+  });
+  if (!metaRes.ok) throw new Error(await metaRes.text());
+}
+
+export async function listMyPhotos() {
+  const headers = await authHeaders();
+  const res = await fetch(`${API}/photos`, { headers });
+  if (!res.ok) throw new Error(await res.text());
+  const { items } = await res.json();
+  return items;
+}
+```
+
+#### Minimal sign-in UI
+
+```tsx
+import { useState } from "react";
+import { signInUser, uploadPhoto, listMyPhotos } from "../lib/uploadPhoto";
+
+export function App() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loggedIn, setLoggedIn] = useState(false);
+
+  async function handleSignIn(e: React.FormEvent) {
+    e.preventDefault();
+    await signInUser(email, password);
+    setLoggedIn(true);
+  }
+
+  // … file input + uploadPhoto(file, caption) when loggedIn
+  // … listMyPhotos() for gallery
+}
+```
+
+Call `import "./amplify"` once at app entry (e.g. `main.tsx`).
+
+#### Handler ↔ route table (authenticated)
+
+| Step | Route | Auth | Handler | Notes |
+| ---- | ----- | ---- | ------- | ----- |
+| **1** | `POST /photos/upload-url` | JWT | `uploadUrl` | `s3Key` under `users/{sub}/photos/` |
+| **2** | `PUT` presigned URL | — | — | S3 only |
+| **3** | `POST /photos` | JWT | `create` | Sets `ownerId` = `sub`; rejects wrong `s3Key` prefix |
+| **list** | `GET /photos` | JWT | `list` | `Query` GSI `byOwner` = `sub` |
+
+```text
+Cognito signIn → IdToken
+uploadUrl (Bearer) → PUT S3 → create (Bearer)
+list (Bearer) → only my rows
+```
 
 ---
 
@@ -236,29 +488,23 @@ Define a table in `serverless.yml` (`resources`), IAM scoped to that table, env 
 
 ### 5. S3 (binary) + connect to Dynamo ✅
 
-Private bucket, **`POST /photos/upload-url`** (presigned PUT), then **`POST /photos`** with **`photoId` + `s3Key` + caption**. See [Photo upload flow](#photo-upload-flow-step-5), [React / Amplify client flow](#react-amplify-client-flow), [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works), and [S3 wiring](#s3-wiring-in-serverlessyml).
+Private bucket, **`POST /photos/upload-url`** (presigned PUT), then **`POST /photos`** with **`photoId` + `s3Key` + caption**. Protected by Cognito JWT (steps 6–7). See [Photo upload flow](#photo-upload-flow-steps-5--78), [Authenticated React / Amplify flow](#authenticated-react--amplify-flow), [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works), and [S3 wiring](#s3-wiring-in-serverlessyml).
 
 **Why after Dynamo:** rows are the index; S3 is where the bytes live.
 
-### 6. Cognito User Pool (identity) ← next
+### 6. Cognito User Pool (identity) ✅
 
-Create a user pool + app client; obtain tokens (console or small test flow).
+User pool + SPA app client; sign up / sign in; obtain **IdToken** JWTs. See [Cognito & JWT auth](#cognito--jwt-auth-steps-68).
 
-**Why after the API does something real:** you know which routes to protect.
+### 7. JWT authorizer on the HTTP API ✅
 
-### 7. JWT authorizer on the HTTP API
+`cognitoJwt` on `/photos*`; **`GET /hello`** stays public. Test **401** without `Authorization: Bearer <token>`.
 
-Attach API Gateway **JWT authorizer** (Cognito) to sensitive routes (e.g. `POST` / `GET` photos); keep e.g. **`GET /hello`** public if you want a health check.
+### 8. Use identity in data (`sub`) ✅
 
-**Why here:** see **401** vs **200** with and without `Authorization: Bearer <token>`.
+`ownerId` from JWT **`sub`**; S3 keys `users/{sub}/photos/...`; **`GET /photos`** uses GSI **`byOwner`** (Query, not Scan).
 
-### 8. Use identity in data (`sub`)
-
-On writes, set **`ownerId`** from the JWT **`sub`**; change reads to “**my** photos” (`Query` / GSI) instead of a global `Scan`.
-
-**Why last among core features:** needs both **auth** and a **data model**.
-
-### 9. Optional stretch goals
+### 9. Optional stretch goals ← next
 
 - **Cognito Identity Pool** + scoped **browser → S3** access
 - Presigned **GET** or **CloudFront** for viewing images
@@ -292,6 +538,8 @@ Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serv
 | S3 wiring in `serverless.yml`     | [Below](#s3-wiring-in-serverlessyml)       |
 | S3 presigned URLs (upload signing) | [Below](#s3-presigned-urls-how-upload-signing-works) |
 | React / Amplify client upload flow | [Below](#react-amplify-client-flow)        |
+| Cognito & JWT (steps 6–8)          | [Below](#cognito--jwt-auth-steps-68)         |
+| Authenticated React / Amplify flow | [Below](#authenticated-react--amplify-flow) |
 | CloudWatch (debugging endpoints)    | [Below](#cloudwatch-debugging-endpoints)   |
 | CORS                                | [Below](#cors)                             |
 | S3, DynamoDB & CloudFront           | [Below](#s3-dynamodb--cloudfront)          |
@@ -500,8 +748,10 @@ iam:
         Action:
           - dynamodb:PutItem
           - dynamodb:GetItem
-          - dynamodb:Scan
-        Resource: !GetAtt PhotosTable.Arn
+          - dynamodb:Query
+        Resource:
+          - !GetAtt PhotosTable.Arn
+          - !Sub "${PhotosTable.Arn}/index/byOwner"
 ```
 
 **`environment` — table name at runtime**
@@ -517,7 +767,7 @@ In code, `src/dynamo.ts` reads it:
 process.env.PHOTOS_TABLE; // → "photostore-learn-dev-photos"
 ```
 
-`createPhoto` and `listPhotos` pass that name to `PutCommand` / `ScanCommand`. Hard-coding the table name in TypeScript would break when stage or service name changes; `!Ref` keeps the name in one place in `serverless.yml`.
+`createPhoto` uses `PutCommand`; `listPhotos` uses `QueryCommand` on GSI **`byOwner`**. Hard-coding the table name in TypeScript would break when stage or service name changes; `!Ref` keeps the name in one place in `serverless.yml`.
 
 **`iam.role.statements` — what Lambda is allowed to do**
 
@@ -526,8 +776,8 @@ This is **not** your personal IAM user. It augments the **Lambda execution role*
 | Piece                               | Meaning                                                                                                                                                         |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Effect: Allow`                     | Permit these actions (everything else on DynamoDB is denied by default).                                                                                        |
-| `Action`                            | Only **`PutItem`**, **`GetItem`**, and **`Scan`**—no `DeleteTable`, `CreateTable`, or `dynamodb:*`.                                                             |
-| `Resource: !GetAtt PhotosTable.Arn` | Permissions apply **only** to this table’s ARN (e.g. `arn:aws:dynamodb:us-east-1:123456789:table/photostore-learn-dev-photos`), not every table in the account. |
+| `Action`                            | **`PutItem`**, **`GetItem`**, **`Query`**—no `Scan`, `DeleteTable`, or `dynamodb:*`. |
+| `Resource`                          | Table ARN + **`byOwner`** index ARN only. |
 
 **How this maps to the API**
 
@@ -535,7 +785,7 @@ This is **not** your personal IAM user. It augments the **Lambda execution role*
 | -------------------------- | ----------------- | ----------------- | ------------------- |
 | `POST /photos/upload-url`  | `uploadPhotoUrl`  | —                 | —                   |
 | `POST /photos`             | `createPhoto`     | `PutItem`         | `dynamodb:PutItem`  |
-| `GET /photos`              | `listPhotos`      | `Scan`            | `dynamodb:Scan`     |
+| `GET /photos`              | `listPhotos`      | `Query` on `byOwner` | `dynamodb:Query` |
 
 `GetItem` is allowed now for a future “get one photo by id” route; nothing calls it yet.
 
@@ -552,7 +802,12 @@ If IAM were too broad (e.g. `dynamodb:*` on `*`), a bug or compromise in Lambda 
 
 **Table definition (same file, `resources`)**
 
-`PhotosTable` is **pay-per-request** with partition key **`photoId`** (string). That matches items in `src/photos.ts` (`photoId`, `s3Key`, `caption`, `createdAt`).
+`PhotosTable` is **pay-per-request** with:
+
+- **PK:** `photoId` (string)
+- **GSI `byOwner`:** `ownerId` (HASH) + `createdAt` (RANGE) — list “my photos” via `Query`
+
+Items in `src/photos.ts`: `photoId`, `ownerId`, `s3Key`, `caption`, `createdAt`.
 
 ### S3 wiring in `serverless.yml`
 
@@ -717,7 +972,7 @@ Presigning is **authorization**. **CORS** is separate: the browser still checks 
 - The bucket stays **private**; the URL is not a public bucket policy.
 - Each URL is **scoped** to one key and one HTTP method (`PUT`).
 - URLs **expire** quickly.
-- **Gap (fixed in step 6–7):** anyone who can hit your HTTP API can still call `/photos/upload-url` and get a valid upload URL. Cognito + JWT on the API will tie presigning to logged-in users; step 8 will prefix keys with `users/{sub}/`.
+- **Auth (steps 6–7):** `/photos*` routes require a valid Cognito JWT; anonymous callers get **401** from API Gateway before Lambda runs.
 
 #### Common failures
 
@@ -858,14 +1113,14 @@ Do **not** store large images in DynamoDB or in the Lambda package.
 
 ```text
 1. Client → POST /photos/upload-url (Lambda)
-   ← presigned PUT URL + photoId + s3Key (e.g. photos/{uuid}.jpg)
+   ← presigned PUT URL + photoId + s3Key (e.g. users/{sub}/photos/{uuid}.jpg)
 
 2. Client → PUT file directly to S3 (bytes never through API Gateway)
 
 3. Client → POST /photos (Lambda) with { photoId, s3Key, caption }
    → DynamoDB PutItem
 
-4. Client → GET /photos (Lambda) → Scan (later: Query by ownerId)
+4. Client → GET /photos (Lambda) → Query GSI byOwner (= JWT sub)
 
 5. View image: presigned GET to S3, or CloudFront signed URL (stretch — step 9)
 ```
@@ -879,13 +1134,13 @@ API Gateway has a **~10 MB** payload limit; direct-to-S3 upload avoids that and 
 - **Block all public access** — configured on `PhotosBucket`.
 - **CORS** — `PUT` / `HEAD` allowed for browser uploads to presigned URLs.
 - **SSE-S3** — default encryption on the bucket.
-- **Key pattern today:** `photos/{photoId}.jpg` (or `.png` / `.webp`). **Later (step 8):** `users/{ownerId}/photos/{photoId}.jpg`.
+- **Key pattern:** `users/{sub}/photos/{photoId}.jpg` (Cognito `sub` from JWT).
 
-**DynamoDB (implemented — step 4)**
+**DynamoDB (steps 4 + 8)**
 
-- Table: `photostore-learn-dev-photos`, key **`photoId`** (string). Routes: **`POST /photos`**, **`GET /photos`**.
-- Wiring: [DynamoDB in `serverless.yml`](#dynamodb-wiring-in-serverlessyml) (`PHOTOS_TABLE` env + IAM on table ARN).
-- Later: GSI on `ownerId` when Cognito `sub` is in play; replace `Scan` with `Query` for “my photos only.”
+- Table: `photostore-learn-dev-photos`, PK **`photoId`**, GSI **`byOwner`** (`ownerId`, `createdAt`).
+- **`GET /photos`** queries by logged-in user’s `sub` — not a global Scan.
+- Wiring: [DynamoDB in `serverless.yml`](#dynamodb-wiring-in-serverlessyml).
 
 **S3 (implemented — step 5)**
 

@@ -43,8 +43,8 @@ curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello"
   | `POST` | `/photos`              | JWT (Cognito)   | save metadata        |
   | `GET`  | `/photos`              | JWT (Cognito)   | **my** photos only   |
 
-- **DynamoDB:** `photostore-learn-dev-photos` — `photoId` PK, GSI `byOwner` (`ownerId` + `createdAt`) — [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml)
-- **S3:** private bucket; keys `users/{sub}/photos/{photoId}.jpg` — [S3 wiring](#s3-wiring-in-serverlessyml)
+- **DynamoDB:** `photostore-learn-dev-photos` — metadata only (`s3Key` points at S3) — [Storage: S3 vs DynamoDB](#storage-s3-vs-dynamodb-what-lives-where) · [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml)
+- **S3:** private bucket; image **bytes** at `users/{sub}/photos/{photoId}.jpg` — [Storage: S3 vs DynamoDB](#storage-s3-vs-dynamodb-what-lives-where) · [S3 wiring](#s3-wiring-in-serverlessyml)
 
 After `npx serverless deploy`, note **Outputs**: `UserPoolId`, `UserPoolClientId`, `HttpApiUrl`, `CognitoIssuer`.
 
@@ -69,6 +69,33 @@ src/
 ```
 
 When you add a new domain (e.g. albums), add `handlers/albums.ts` plus any `schemas/albums.ts`. Put new AWS services under `clients/`.
+
+### Storage: S3 vs DynamoDB (what lives where)
+
+The app splits **files** from **catalog rows**. Lambda and API Gateway never receive image bytes on upload—the browser sends those straight to S3.
+
+| Store | Holds | Does *not* hold |
+| ----- | ----- | ---------------- |
+| **S3** (`PhotosBucket`) | The actual image **file** (JPEG, PNG, or WebP bytes) | Captions, ownership lists, or queryable metadata |
+| **DynamoDB** (`PhotosTable`) | **Metadata** about each photo | Image bytes |
+
+**DynamoDB is a reference/index.** Each row points at one object in S3 via **`s3Key`** (the object path in the bucket, e.g. `users/<cognito-sub>/photos/<photoId>.jpg`). The row also stores:
+
+| Field | Meaning |
+| ----- | ------- |
+| `photoId` | Unique id (partition key) |
+| `ownerId` | Cognito JWT `sub` — who owns this photo |
+| `s3Key` | **Pointer** to the S3 object (not a public URL) |
+| `caption` | User-visible description |
+| `createdAt` | When the row was written (used to sort “my photos”) |
+
+**What you upload to S3:** the raw image file from step 2 of the flow—a `PUT` to the presigned URL with the file bytes as the body and a `Content-Type` that matches what you requested in step 1 (`image/jpeg`, `image/png`, or `image/webp`). That creates (or overwrites) one object at `s3Key`.
+
+**What you save in DynamoDB:** only JSON from step 3—`photoId`, `s3Key`, and `caption`—after S3 already has the file. No file bytes go into DynamoDB.
+
+**Why split them:** S3 is built for large, cheap object storage; DynamoDB is built for fast queries (e.g. “all photos for this user” via GSI `byOwner`). Presigned URLs let clients upload and download without proxying megabytes through API Gateway or Lambda.
+
+See `PhotoItem` in `src/handlers/photos.ts` and the three HTTP steps below.
 
 ### Photo upload flow (steps 5 + 7–8)
 
@@ -861,6 +888,7 @@ Browser / curl
 
 | Topic                               | Section                                    |
 | ----------------------------------- | ------------------------------------------ |
+| S3 vs DynamoDB (what lives where)   | [Above](#storage-s3-vs-dynamodb-what-lives-where) |
 | AWS services glossary               | [Above](#aws-services-in-this-project)     |
 | AWS account & billing               | [Below](#aws-account--billing)             |
 | IAM & deploy permissions            | [Below](#iam--deploy-permissions)          |

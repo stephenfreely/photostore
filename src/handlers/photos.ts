@@ -3,11 +3,11 @@
  *
  * - `uploadUrl` — `POST /photos/upload-url` — presigned PUT URL + ids (JWT required)
  * - `create`    — `POST /photos`           — save metadata after S3 upload
- * - `list`      — `GET /photos`            — list current user's photos (Query by ownerId)
+ * - `list`      — `GET /photos`            — list current user's photos + presigned `imageUrl` each
  */
 
 import { randomUUID } from "node:crypto";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type {
@@ -16,10 +16,12 @@ import type {
 } from "aws-lambda";
 import { docClient, photosTableName } from "../clients/dynamo";
 import {
+  contentTypeForS3Key,
   extensionForContentType,
   photosBucketName,
   s3Client,
   UPLOAD_URL_EXPIRES_SECONDS,
+  VIEW_URL_EXPIRES_SECONDS,
 } from "../clients/s3";
 import {
   isS3KeyOwnedBy,
@@ -50,6 +52,29 @@ export type PhotoItem = {
   /** ISO 8601 timestamp set at write time (sort key on GSI) */
   createdAt: string;
 };
+
+/** `GET /photos` row — metadata plus a time-limited URL to download bytes from S3. */
+export type PhotoListItem = PhotoItem & {
+  /** Presigned HTTPS GET URL; use as `<img src>` or `fetch` (expires — see below) */
+  imageUrl: string;
+  /** Seconds until `imageUrl` stops working (`VIEW_URL_EXPIRES_SECONDS`) */
+  imageUrlExpiresInSeconds: number;
+};
+
+async function presignedImageUrl(s3Key: string): Promise<string> {
+  const responseContentType = contentTypeForS3Key(s3Key);
+  return getSignedUrl(
+    s3Client,
+    new GetObjectCommand({
+      Bucket: photosBucketName(),
+      Key: s3Key,
+      ...(responseContentType
+        ? { ResponseContentType: responseContentType }
+        : {}),
+    }),
+    { expiresIn: VIEW_URL_EXPIRES_SECONDS },
+  );
+}
 
 /**
  * Mint a presigned S3 PUT URL (`POST /photos/upload-url`).
@@ -163,7 +188,7 @@ export const create = async (
  * Uses GSI `byOwner` (ownerId + createdAt) — not a global Scan.
  *
  * @param event - HTTP API event with Cognito JWT claims
- * @returns `200` with `{ items: PhotoItem[] }`
+ * @returns `200` with `{ items: PhotoListItem[] }` (each item includes presigned `imageUrl`)
  */
 export const list = async (
   event: APIGatewayProxyEventV2,
@@ -183,7 +208,15 @@ export const list = async (
         ScanIndexForward: false,
       }),
     );
-    return json(200, { items: (result.Items ?? []) as PhotoItem[] });
+    const items = (result.Items ?? []) as PhotoItem[];
+    const itemsWithUrls: PhotoListItem[] = await Promise.all(
+      items.map(async (photo) => ({
+        ...photo,
+        imageUrl: await presignedImageUrl(photo.s3Key),
+        imageUrlExpiresInSeconds: VIEW_URL_EXPIRES_SECONDS,
+      })),
+    );
+    return json(200, { items: itemsWithUrls });
   } catch (err) {
     console.error("Query failed", err);
     return json(500, { error: "Failed to list photos" });

@@ -113,8 +113,12 @@ curl -s -X POST "$API/photos" \
   -H "$AUTH" \
   -d "{\"photoId\":\"$PHOTO_ID\",\"s3Key\":\"$S3_KEY\",\"caption\":\"beach sunset\"}"
 
-# 4. List my photos only
-curl -s -H "$AUTH" "$API/photos"
+# 4. List my photos (metadata + presigned imageUrl per row)
+curl -s -H "$AUTH" "$API/photos" | jq .
+
+# Use imageUrl in a browser <img src="..."> or download with curl:
+# IMAGE_URL=$(curl -s -H "$AUTH" "$API/photos" | jq -r '.items[0].imageUrl')
+# curl -o thumb.jpg "$IMAGE_URL"
 
 # Without token → 401 from API Gateway
 curl -s -o /dev/null -w "%{http_code}\n" "$API/photos"
@@ -131,7 +135,7 @@ One user journey, **three HTTP steps**, **two API Lambdas** in `src/handlers/pho
 | **1** | `POST /photos/upload-url` | `uploadPhotoUrl` | `uploadUrl` | Presign S3 `PUT`; return `photoId`, `s3Key`, `uploadUrl` |
 | **2** | `PUT` presigned URL | — | — | Client uploads file bytes to **S3** (not API Gateway) |
 | **3** | `POST /photos` | `createPhoto` | **`create`** | Validate body; **PutItem** metadata to DynamoDB |
-| *(list)* | `GET /photos` | `listPhotos` | `list` | **Query** GSI `byOwner` = JWT `sub` (my photos only) |
+| *(list)* | `GET /photos` | `listPhotos` | `list` | **Query** GSI `byOwner` = JWT `sub`; each row includes presigned **`imageUrl`** |
 
 ```text
 uploadUrl  →  (client PUT S3)  →  create
@@ -184,7 +188,7 @@ sequenceDiagram
 | 2 | React → **S3** | `PUT` | `uploadUrl` from step 1 | Raw `File` / `Blob` (same `Content-Type`) |
 | 3 | React → **your API** | `POST` | `{API}/photos` | `{ "photoId", "s3Key", "caption" }` from step 1 + form |
 
-Optional: `GET {API}/photos` to list metadata (no image bytes; viewing needs presigned GET later).
+**List / gallery:** `GET {API}/photos` returns metadata plus a presigned **`imageUrl`** per row (1 hour TTL). Re-fetch the list when URLs expire. Image bytes still come from **S3**, not API Gateway.
 
 #### Flowchart (who talks to whom)
 
@@ -258,7 +262,7 @@ Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `
 
 **Auth & React:** [Cognito & JWT auth](#cognito--jwt-auth-steps-68) · [Authenticated React / Amplify flow](#authenticated-react--amplify-flow)
 
-**Next lesson step:** **9. Optional stretch goals** in the [learning path](#learning-path-recommended-order) (presigned GET, CloudFront, Identity Pool).
+**Next lesson step:** **9. Optional stretch goals** in the [learning path](#learning-path-recommended-order) (CloudFront, Identity Pool).
 
 ---
 
@@ -750,7 +754,7 @@ Call `import "./amplify"` once at app entry (e.g. `main.tsx`).
 | **1** | `POST /photos/upload-url` | JWT | `uploadUrl` | `s3Key` under `users/{sub}/photos/` |
 | **2** | `PUT` presigned URL | — | — | S3 only |
 | **3** | `POST /photos` | JWT | `create` | Sets `ownerId` = `sub`; rejects wrong `s3Key` prefix |
-| **list** | `GET /photos` | JWT | `list` | `Query` GSI `byOwner` = `sub` |
+| **list** | `GET /photos` | JWT | `list` | `Query` GSI `byOwner` = `sub`; each item has `imageUrl` |
 
 ```text
 Cognito signIn → IdToken
@@ -809,7 +813,7 @@ User pool + SPA app client; sign up / sign in; obtain **IdToken** JWTs. See [Cog
 ### 9. Optional stretch goals ← next
 
 - **Cognito Identity Pool** + scoped **browser → S3** access
-- Presigned **GET** or **CloudFront** for viewing images
+- **CloudFront** in front of S3 for faster repeat views (presigned **GET** via `imageUrl` is already implemented on `GET /photos`)
 - Better errors, least-privilege IAM, Cognito MFA / password policies
 
 ---
@@ -1238,7 +1242,7 @@ Items in `src/handlers/photos.ts`: `photoId`, `ownerId`, `s3Key`, `caption`, `cr
   Resource: !Sub "${PhotosBucket.Arn}/*"
 ```
 
-Only **`PutObject`** on objects in this bucket—enough to mint presigned PUT URLs. No public read; viewing images via presigned GET comes in a later stretch goal. See [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works) for how signing works end-to-end.
+**`PutObject`** and **`GetObject`** on objects in this bucket—enough to mint presigned PUT (upload) and GET (view) URLs. No public read. See [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works) and [Viewing photos](#viewing-photos-presigned-get).
 
 **Bucket (`PhotosBucket` under `resources`)**
 
@@ -1246,7 +1250,7 @@ Only **`PutObject`** on objects in this bucket—enough to mint presigned PUT UR
 | ------------------------------- | ---------------------------------------------------- |
 | `PublicAccessBlockConfiguration` | Block all public access                            |
 | `BucketEncryption` (SSE-S3)     | Encrypt objects at rest                              |
-| `CorsConfiguration`               | Allow browser `PUT` directly to presigned URLs       |
+| `CorsConfiguration`               | Allow browser `GET` / `PUT` to presigned URLs        |
 
 CloudFormation assigns the bucket name (no hard-coded global name). Find it after deploy: Lambda env `PHOTOS_BUCKET`, or **S3 → Buckets** in the console.
 
@@ -1256,7 +1260,7 @@ CloudFormation assigns the bucket name (no hard-coded global name). Find it afte
 | -------------------------- | ----------------- | --------------------------------------------- |
 | `POST /photos/upload-url`  | `uploadPhotoUrl`  | `getSignedUrl` for `PutObject` on `photos/{id}.jpg` |
 | `POST /photos`             | `createPhoto`     | None (metadata only; bytes already in S3)     |
-| `GET /photos`              | `listPhotos`      | None (returns `s3Key`; no download URL yet)    |
+| `GET /photos`              | `listPhotos`      | `getSignedUrl` for `GetObject` per row → `imageUrl` |
 
 **End-to-end upload**
 
@@ -1264,7 +1268,7 @@ CloudFormation assigns the bucket name (no hard-coded global name). Find it afte
 Client → POST /photos/upload-url → Lambda returns { photoId, s3Key, uploadUrl }
 Client → PUT uploadUrl (direct to S3; bytes bypass API Gateway)
 Client → POST /photos { photoId, s3Key, caption } → DynamoDB PutItem
-Client → GET /photos → Scan metadata (includes s3Key per row)
+Client → GET /photos → Query metadata + presigned imageUrl per row
 ```
 
 ### S3 presigned URLs (how upload signing works)
@@ -1376,7 +1380,7 @@ curl -X PUT \
 
 #### CORS and presigning
 
-Presigning is **authorization**. **CORS** is separate: the browser still checks whether S3 allows your web app’s origin to read the response from `PUT`. `PhotosBucket` in `serverless.yml` sets `CorsConfiguration` with `PUT` and `HEAD` so a future SPA on `localhost:5173` (or similar) can upload without the API proxying bytes. **curl** ignores CORS.
+Presigning is **authorization**. **CORS** is separate: the browser still checks whether S3 allows your web app’s origin to read the response from `PUT` / `GET`. `PhotosBucket` in `serverless.yml` sets `CorsConfiguration` with `GET`, `PUT`, and `HEAD` so a SPA can upload and render `<img src={imageUrl}>` without the API proxying bytes. **curl** ignores CORS.
 
 #### Security in *this* learning stack
 
@@ -1402,7 +1406,56 @@ After a successful `PUT`:
 1. **S3** → your photos bucket → prefix `photos/` → object with your `photoId` in the key.
 2. **DynamoDB** → `photostore-learn-dev-photos` → item with matching `photoId` and `s3Key` (after step 3).
 
-Object is not world-readable; downloading for display needs a future presigned **GET** or CloudFront (stretch goal).
+Object is not world-readable. **`GET /photos`** returns a presigned **`imageUrl`** per row (see [Viewing photos (presigned GET)](#viewing-photos-presigned-get)). CloudFront remains an optional stretch goal for caching.
+
+### Viewing photos (presigned GET)
+
+The bucket stays **private**—you cannot paste `s3Key` into a browser and load the image. Instead, **`GET /photos`** (handler `list` in `src/handlers/photos.ts`) queries DynamoDB, then calls **`getSignedUrl`** with **`GetObjectCommand`** once per row. The client never needs AWS credentials to download; the URL **is** the credential for that object until it expires.
+
+#### Example response
+
+```json
+{
+  "items": [
+    {
+      "photoId": "7900666b-7946-4e4c-a755-25ec1d5a12fa",
+      "ownerId": "54d844f8-a0e1-709f-d33e-37022a5b8b0b",
+      "s3Key": "users/54d844f8-a0e1-709f-d33e-37022a5b8b0b/photos/7900666b-7946-4e4c-a755-25ec1d5a12fa.png",
+      "caption": "photo store",
+      "createdAt": "2026-05-20T01:20:37.162Z",
+      "imageUrl": "https://<bucket>.s3.us-east-1.amazonaws.com/users/.../photos/....png?X-Amz-Algorithm=...",
+      "imageUrlExpiresInSeconds": 3600
+    }
+  ]
+}
+```
+
+| Field | Purpose |
+| ----- | ------- |
+| `s3Key` | Stable storage path (keep in DB; do not treat as a public URL) |
+| `imageUrl` | Time-limited HTTPS GET link — use in `<img src>` or `fetch` |
+| `imageUrlExpiresInSeconds` | TTL (**3600** = 1 hour, `VIEW_URL_EXPIRES_SECONDS` in `src/clients/s3.ts`) |
+
+When URLs expire, call **`GET /photos` again** to mint fresh ones (or add a dedicated `GET /photos/{id}/view-url` later).
+
+#### React gallery (snippet)
+
+```tsx
+const items = await listMyPhotos();
+
+return (
+  <ul>
+    {items.map((photo) => (
+      <li key={photo.photoId}>
+        <img src={photo.imageUrl} alt={photo.caption} />
+        <p>{photo.caption}</p>
+      </li>
+    ))}
+  </ul>
+);
+```
+
+Same flow as upload presigning, but **`GetObject`** instead of **`PutObject`**, and signing happens in **`listPhotos`** rather than a separate route.
 
 ### CloudWatch (debugging endpoints)
 
@@ -1549,7 +1602,7 @@ Do **not** store large images in DynamoDB or in the Lambda package.
 
 4. Client → GET /photos (Lambda) → Query GSI byOwner (= JWT sub)
 
-5. View image: presigned GET to S3, or CloudFront signed URL (stretch — step 9)
+5. View image: use `imageUrl` from `GET /photos` (presigned GET to S3), or CloudFront later (stretch — step 9)
 ```
 
 See [Photo upload flow](#photo-upload-flow-steps-5--78) for `curl` examples.
@@ -1559,7 +1612,7 @@ API Gateway has a **~10 MB** payload limit; direct-to-S3 upload avoids that and 
 **S3 bucket settings in this repo**
 
 - **Block all public access** — configured on `PhotosBucket`.
-- **CORS** — `PUT` / `HEAD` allowed for browser uploads to presigned URLs.
+- **CORS** — `GET` / `PUT` / `HEAD` allowed so browsers can render presigned view URLs and upload via presigned PUT.
 - **SSE-S3** — default encryption on the bucket.
 - **Key pattern:** `users/{sub}/photos/{photoId}.jpg` (Cognito `sub` from JWT).
 
@@ -1571,8 +1624,8 @@ API Gateway has a **~10 MB** payload limit; direct-to-S3 upload avoids that and 
 
 **S3 (implemented — step 5)**
 
-- Private bucket via `PhotosBucket`; presigned upload via **`POST /photos/upload-url`**.
-- Wiring: [S3 in `serverless.yml`](#s3-wiring-in-serverlessyml) (`PHOTOS_BUCKET` env + `s3:PutObject` on bucket objects).
+- Private bucket via `PhotosBucket`; presigned upload via **`POST /photos/upload-url`**; presigned view URLs on **`GET /photos`**.
+- Wiring: [S3 in `serverless.yml`](#s3-wiring-in-serverlessyml) (`PHOTOS_BUCKET` env + `s3:PutObject` / `s3:GetObject` on bucket objects).
 
 **CloudFront—when to add it**
 

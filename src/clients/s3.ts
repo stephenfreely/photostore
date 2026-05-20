@@ -15,7 +15,27 @@ import { S3Client } from "@aws-sdk/client-s3";
  */
 export const UPLOAD_URL_EXPIRES_SECONDS = 300;
 
+/**
+ * How long presigned view URLs remain valid (seconds).
+ * Returned on each item from `GET /photos` as `imageUrlExpiresInSeconds`.
+ */
+export const VIEW_URL_EXPIRES_SECONDS = 3600;
+
 /** Maps allowed `Content-Type` values to file extensions in S3 keys. */
+/** Infer `Content-Type` from an S3 key extension (for presigned GET responses). */
+export const contentTypeForS3Key = (s3Key: string): string | undefined => {
+  if (s3Key.endsWith(".jpg") || s3Key.endsWith(".jpeg")) {
+    return "image/jpeg";
+  }
+  if (s3Key.endsWith(".png")) {
+    return "image/png";
+  }
+  if (s3Key.endsWith(".webp")) {
+    return "image/webp";
+  }
+  return undefined;
+};
+
 export const extensionForContentType = (contentType: string): string => {
   switch (contentType) {
     case "image/jpeg":

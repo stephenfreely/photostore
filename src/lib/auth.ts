@@ -12,7 +12,7 @@ import { json } from "./http";
 
 /** JWT claims on HTTP API events when `cognitoJwt` authorizer is attached. */
 type JwtAuthorizerContext = {
-  jwt?: { claims?: Record<string, string> };
+  authorizer?: { jwt?: { claims?: Record<string, string> } };
 };
 
 /**
@@ -26,7 +26,7 @@ type JwtAuthorizerContext = {
 export const getOwnerId = (event: APIGatewayProxyEventV2): string | null => {
   const ctx = event.requestContext as APIGatewayProxyEventV2["requestContext"] &
     JwtAuthorizerContext;
-  const sub = ctx?.jwt?.claims?.sub;
+  const sub = ctx?.authorizer?.jwt?.claims?.sub;
   return typeof sub === "string" && sub.length > 0 ? sub : null;
 };
 

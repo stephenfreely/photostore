@@ -4,6 +4,12 @@
   "scripts": {
     "build": "serverless package",
     "print": "serverless print",
+    "deploy": "serverless deploy",
+    "deploy:sync": "serverless deploy && ./scripts/sync-client-env.sh",
+    "remove": "serverless remove",
+    "remove:safe": "./scripts/backup-client-env.sh && serverless remove",
+    "env:sync": "./scripts/sync-client-env.sh",
+    "env:backup": "./scripts/backup-client-env.sh",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

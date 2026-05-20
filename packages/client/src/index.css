@@ -148,6 +148,7 @@ button.secondary {
   text-align: center;
 }
 
+a.link,
 button.link {
   background: none;
   border: none;

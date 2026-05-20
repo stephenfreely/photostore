@@ -1,12 +1,9 @@
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import {
   useConfirmResetPassword,
   useResetPassword,
 } from "../hooks/useAuth";
-
-type ForgotPasswordFormProps = {
-  onSwitchToSignIn: () => void;
-};
 
 type Step = "request" | "confirm";
 
@@ -23,7 +20,8 @@ function formatDeliveryDestination(
   return destination;
 }
 
-export function ForgotPasswordForm({ onSwitchToSignIn }: ForgotPasswordFormProps) {
+export function ForgotPasswordForm() {
+  const navigate = useNavigate();
   const [step, setStep] = useState<Step>("request");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -35,6 +33,10 @@ export function ForgotPasswordForm({ onSwitchToSignIn }: ForgotPasswordFormProps
 
   const resetPassword = useResetPassword();
   const confirmReset = useConfirmResetPassword();
+
+  function goToSignIn() {
+    void navigate({ to: "/login" });
+  }
 
   function handleRequestSubmit(event: FormEvent) {
     event.preventDefault();
@@ -97,7 +99,7 @@ export function ForgotPasswordForm({ onSwitchToSignIn }: ForgotPasswordFormProps
         <p className="success" role="status">
           Your password has been reset. Sign in with your new password.
         </p>
-        <button type="button" onClick={onSwitchToSignIn}>
+        <button type="button" onClick={goToSignIn}>
           Back to sign in
         </button>
       </div>
@@ -175,7 +177,7 @@ export function ForgotPasswordForm({ onSwitchToSignIn }: ForgotPasswordFormProps
             Use a different email
           </button>
           {" · "}
-          <button type="button" className="link" onClick={onSwitchToSignIn}>
+          <button type="button" className="link" onClick={goToSignIn}>
             Back to sign in
           </button>
         </p>
@@ -215,9 +217,9 @@ export function ForgotPasswordForm({ onSwitchToSignIn }: ForgotPasswordFormProps
 
       <p className="auth-footer muted">
         Remember your password?{" "}
-        <button type="button" className="link" onClick={onSwitchToSignIn}>
+        <Link to="/login" className="link">
           Sign in
-        </button>
+        </Link>
       </p>
     </form>
   );

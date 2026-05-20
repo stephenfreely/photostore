@@ -3,8 +3,6 @@ import {
   autoSignIn,
   confirmResetPassword,
   confirmSignUp,
-  fetchAuthSession,
-  getCurrentUser,
   resendSignUpCode,
   resetPassword,
   signIn,
@@ -18,29 +16,13 @@ import {
   type SignUpInput,
 } from "aws-amplify/auth";
 import { photoKeys } from "../api/photos";
+import { authKeys, authSessionQueryOptions } from "../lib/authSession";
 import { mergeGuestOnLogin } from "../lib/mergeGuestOnLogin";
 
-export const authKeys = {
-  session: ["auth", "session"] as const,
-};
+export { authKeys };
 
 export function useAuthSession() {
-  return useQuery({
-    queryKey: authKeys.session,
-    queryFn: async () => {
-      try {
-        const [user, session] = await Promise.all([
-          getCurrentUser(),
-          fetchAuthSession(),
-        ]);
-        const hasToken = Boolean(session.tokens?.idToken);
-        return { isAuthenticated: hasToken, user: hasToken ? user : null };
-      } catch {
-        return { isAuthenticated: false, user: null };
-      }
-    },
-    retry: false,
-  });
+  return useQuery(authSessionQueryOptions);
 }
 
 export function useSignIn() {

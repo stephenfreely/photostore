@@ -1,14 +1,16 @@
-import { PhotoGallery } from "./components/PhotoGallery";
-import { PhotoUpload } from "./components/PhotoUpload";
-import { GuestPhotoSection } from "./components/GuestPhotoSection";
-import { AuthPanel } from "./components/AuthPanel";
-import { useAuthSession, useSignOut } from "./hooks/useAuth";
-import { useHello } from "./hooks/useHealth";
-import { usePendingGuestMerge } from "./hooks/usePendingGuestMerge";
+import { Outlet, createRootRouteWithContext } from "@tanstack/react-router";
+import { useAuthSession, useSignOut } from "../hooks/useAuth";
+import { useHello } from "../hooks/useHealth";
+import { usePendingGuestMerge } from "../hooks/usePendingGuestMerge";
+import type { RouterContext } from "../router";
 
-export default function App() {
-  const session = useAuthSession();
+export const Route = createRootRouteWithContext<RouterContext>()({
+  component: RootLayout,
+});
+
+function RootLayout() {
   usePendingGuestMerge();
+  const session = useAuthSession();
   const signOut = useSignOut();
   const hello = useHello();
 
@@ -41,16 +43,8 @@ export default function App() {
 
       {session.isLoading ? (
         <p className="muted">Checking session…</p>
-      ) : isAuthenticated ? (
-        <main className="grid">
-          <PhotoUpload />
-          <PhotoGallery />
-        </main>
       ) : (
-        <main className="grid">
-          <GuestPhotoSection />
-          <AuthPanel />
-        </main>
+        <Outlet />
       )}
     </div>
   );

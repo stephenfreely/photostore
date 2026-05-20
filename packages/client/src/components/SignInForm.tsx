@@ -1,19 +1,25 @@
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { useSignIn } from "../hooks/useAuth";
 
-type SignInFormProps = {
-  onSwitchToSignUp?: () => void;
-  onForgotPassword?: () => void;
-};
-
-export function SignInForm({ onSwitchToSignUp, onForgotPassword }: SignInFormProps) {
+export function SignInForm() {
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const signIn = useSignIn();
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    signIn.mutate({ username: email, password });
+    signIn.mutate(
+      { username: email, password },
+      {
+        onSuccess: (output) => {
+          if (output.isSignedIn) {
+            void navigate({ to: "/" });
+          }
+        },
+      },
+    );
   }
 
   return (
@@ -43,13 +49,11 @@ export function SignInForm({ onSwitchToSignUp, onForgotPassword }: SignInFormPro
         />
       </label>
 
-      {onForgotPassword && (
-        <p className="auth-footer">
-          <button type="button" className="link" onClick={onForgotPassword}>
-            Forgot password?
-          </button>
-        </p>
-      )}
+      <p className="auth-footer">
+        <Link to="/forgot-password" className="link">
+          Forgot password?
+        </Link>
+      </p>
 
       {signIn.isError && (
         <p className="error" role="alert">
@@ -61,14 +65,12 @@ export function SignInForm({ onSwitchToSignUp, onForgotPassword }: SignInFormPro
         {signIn.isPending ? "Signing in…" : "Sign in"}
       </button>
 
-      {onSwitchToSignUp && (
-        <p className="auth-footer muted">
-          Need an account?{" "}
-          <button type="button" className="link" onClick={onSwitchToSignUp}>
-            Sign up
-          </button>
-        </p>
-      )}
+      <p className="auth-footer muted">
+        Need an account?{" "}
+        <Link to="/signup" className="link">
+          Sign up
+        </Link>
+      </p>
     </form>
   );
 }

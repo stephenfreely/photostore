@@ -1,9 +1,6 @@
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { useConfirmSignUp, useResendSignUpCode, useSignUp } from "../hooks/useAuth";
-
-type SignUpFormProps = {
-  onSwitchToSignIn: () => void;
-};
 
 type Step = "register" | "confirm";
 
@@ -20,7 +17,8 @@ function formatDeliveryDestination(
   return destination;
 }
 
-export function SignUpForm({ onSwitchToSignIn }: SignUpFormProps) {
+export function SignUpForm() {
+  const navigate = useNavigate();
   const [step, setStep] = useState<Step>("register");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -32,6 +30,10 @@ export function SignUpForm({ onSwitchToSignIn }: SignUpFormProps) {
   const signUp = useSignUp();
   const confirmSignUp = useConfirmSignUp();
   const resendCode = useResendSignUpCode();
+
+  function goToSignIn() {
+    void navigate({ to: "/login" });
+  }
 
   function handleRegisterSubmit(event: FormEvent) {
     event.preventDefault();
@@ -66,7 +68,7 @@ export function SignUpForm({ onSwitchToSignIn }: SignUpFormProps) {
           }
 
           if (output.nextStep.signUpStep === "DONE") {
-            onSwitchToSignIn();
+            goToSignIn();
           }
         },
       },
@@ -82,7 +84,7 @@ export function SignUpForm({ onSwitchToSignIn }: SignUpFormProps) {
       {
         onSuccess: (output) => {
           if (output.nextStep.signUpStep === "DONE") {
-            onSwitchToSignIn();
+            goToSignIn();
           }
         },
       },
@@ -216,9 +218,9 @@ export function SignUpForm({ onSwitchToSignIn }: SignUpFormProps) {
 
       <p className="auth-footer muted">
         Already have an account?{" "}
-        <button type="button" className="link" onClick={onSwitchToSignIn}>
+        <Link to="/login" className="link">
           Sign in
-        </button>
+        </Link>
       </p>
     </form>
   );

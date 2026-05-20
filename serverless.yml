@@ -21,7 +21,18 @@ provider:
   runtime: nodejs20.x
   region: us-east-1
   httpApi:
-    cors: true
+    cors:
+      allowedOrigins:
+        - "*"
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+        - X-Guest-Identity-Id
+      allowedMethods:
+        - GET
+        - POST
+        - OPTIONS
+      maxAge: 86400
     authorizers:
       cognitoJwt:
         type: jwt
@@ -49,7 +60,13 @@ provider:
           Action:
             - s3:PutObject
             - s3:GetObject
+            - s3:CopyObject
+            - s3:DeleteObject
           Resource: !Sub "${PhotosBucket.Arn}/*"
+        - Effect: Allow
+          Action:
+            - dynamodb:DeleteItem
+          Resource: !GetAtt PhotosTable.Arn
 
 functions:
   hello:
@@ -86,6 +103,36 @@ functions:
           authorizer:
             name: cognitoJwt
 
+  mergePhotos:
+    handler: src/handlers/photos.merge
+    events:
+      - httpApi:
+          path: /photos/merge
+          method: POST
+          authorizer:
+            name: cognitoJwt
+
+  guestUploadPhotoUrl:
+    handler: src/handlers/guestPhotos.uploadUrl
+    events:
+      - httpApi:
+          path: /guest/photos/upload-url
+          method: POST
+
+  guestCreatePhoto:
+    handler: src/handlers/guestPhotos.create
+    events:
+      - httpApi:
+          path: /guest/photos
+          method: POST
+
+  guestListPhotos:
+    handler: src/handlers/guestPhotos.list
+    events:
+      - httpApi:
+          path: /guest/photos
+          method: GET
+
 resources:
   Resources:
     CognitoUserPool:
@@ -115,6 +162,65 @@ resources:
           - ALLOW_USER_SRP_AUTH
           - ALLOW_REFRESH_TOKEN_AUTH
         PreventUserExistenceErrors: ENABLED
+
+    CognitoIdentityPool:
+      Type: AWS::Cognito::IdentityPool
+      Properties:
+        IdentityPoolName: ${self:service}-${sls:stage}-identity
+        AllowUnauthenticatedIdentities: true
+        CognitoIdentityProviders:
+          - ClientId: !Ref CognitoUserPoolClient
+            ProviderName: !Sub cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}
+
+    CognitoUnauthenticatedRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Federated: cognito-identity.amazonaws.com
+              Action: sts:AssumeRoleWithWebIdentity
+              Condition:
+                StringEquals:
+                  cognito-identity.amazonaws.com:aud: !Ref CognitoIdentityPool
+                "ForAnyValue:StringLike":
+                  cognito-identity.amazonaws.com:amr: unauthenticated
+        Policies:
+          - PolicyName: guest-minimal
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - cognito-identity:GetId
+                  Resource: "*"
+
+    CognitoAuthenticatedRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Federated: cognito-identity.amazonaws.com
+              Action: sts:AssumeRoleWithWebIdentity
+              Condition:
+                StringEquals:
+                  cognito-identity.amazonaws.com:aud: !Ref CognitoIdentityPool
+                "ForAnyValue:StringLike":
+                  cognito-identity.amazonaws.com:amr: authenticated
+        # No inline policies yet (authenticated users use API JWT + presigned URLs).
+
+    CognitoIdentityPoolRoles:
+      Type: AWS::Cognito::IdentityPoolRoleAttachment
+      Properties:
+        IdentityPoolId: !Ref CognitoIdentityPool
+        Roles:
+          authenticated: !GetAtt CognitoAuthenticatedRole.Arn
+          unauthenticated: !GetAtt CognitoUnauthenticatedRole.Arn
 
     PhotosTable:
       Type: AWS::DynamoDB::Table
@@ -173,6 +279,8 @@ resources:
       Value: !Ref CognitoUserPool
     UserPoolClientId:
       Value: !Ref CognitoUserPoolClient
+    IdentityPoolId:
+      Value: !Ref CognitoIdentityPool
     CognitoIssuer:
       Description: JWT issuer URL (for debugging)
       Value: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}

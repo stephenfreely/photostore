@@ -7,9 +7,14 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  CopyObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type {
   APIGatewayProxyEventV2,
   APIGatewayProxyStructuredResultV2,
@@ -24,12 +29,14 @@ import {
   VIEW_URL_EXPIRES_SECONDS,
 } from "../clients/s3";
 import {
+  guestOwnerId,
   isS3KeyOwnedBy,
   requireOwnerId,
   s3KeyPrefixForOwner,
 } from "../lib/auth";
 import { json, parseJsonBody } from "../lib/http";
 import { createPhotoBodySchema, zodErrorMessage } from "../schemas/photos";
+import { mergePhotosBodySchema } from "../schemas/merge";
 import { uploadUrlBodySchema } from "../schemas/upload";
 
 /** GSI name for listing photos by owner (see `serverless.yml`). */
@@ -221,4 +228,107 @@ export const list = async (
     console.error("Query failed", err);
     return json(500, { error: "Failed to list photos" });
   }
+};
+
+/**
+ * Move guest photos to the signed-in user (`POST /photos/merge`).
+ *
+ * After Cognito sign-in, the client sends the **pre-login** Identity Pool id so
+ * objects under `guests/{id}/` become `users/{sub}/photos/`.
+ */
+export const merge = async (
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyStructuredResultV2> => {
+  const auth = requireOwnerId(event);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
+  const parsedBody = parseJsonBody(event.body);
+  if (!parsedBody.ok) {
+    return parsedBody.response;
+  }
+
+  const body = mergePhotosBodySchema.safeParse(parsedBody.value);
+  if (!body.success) {
+    return json(400, { error: zodErrorMessage(body.error) });
+  }
+
+  const guestOwner = guestOwnerId(body.data.guestIdentityId);
+  const bucket = photosBucketName();
+
+  let guestItems: PhotoItem[];
+  try {
+    const result = await docClient.send(
+      new QueryCommand({
+        TableName: photosTableName(),
+        IndexName: BY_OWNER_INDEX,
+        KeyConditionExpression: "ownerId = :ownerId",
+        ExpressionAttributeValues: { ":ownerId": guestOwner },
+      }),
+    );
+    guestItems = (result.Items ?? []) as PhotoItem[];
+  } catch (err) {
+    console.error("merge Query failed", err);
+    return json(500, { error: "Failed to load guest photos" });
+  }
+
+  if (guestItems.length === 0) {
+    return json(200, { mergedCount: 0, photos: [] });
+  }
+
+  const merged: PhotoItem[] = [];
+
+  for (const photo of guestItems) {
+    const filename = photo.s3Key.split("/").pop();
+    if (!filename) {
+      continue;
+    }
+    const newS3Key = `${s3KeyPrefixForOwner(auth.ownerId)}${filename}`;
+
+    try {
+      await s3Client.send(
+        new CopyObjectCommand({
+          Bucket: bucket,
+          CopySource: `${bucket}/${photo.s3Key}`,
+          Key: newS3Key,
+        }),
+      );
+      await s3Client.send(
+        new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: photo.s3Key,
+        }),
+      );
+
+      const updated: PhotoItem = {
+        ...photo,
+        ownerId: auth.ownerId,
+        s3Key: newS3Key,
+      };
+
+      await docClient.send(
+        new DeleteCommand({
+          TableName: photosTableName(),
+          Key: { photoId: photo.photoId },
+        }),
+      );
+      await docClient.send(
+        new PutCommand({
+          TableName: photosTableName(),
+          Item: updated,
+        }),
+      );
+
+      merged.push(updated);
+    } catch (err) {
+      console.error("merge copy failed", photo.photoId, err);
+      return json(500, {
+        error: "Failed to merge one or more photos",
+        mergedCount: merged.length,
+      });
+    }
+  }
+
+  return json(200, { mergedCount: merged.length, photos: merged });
 };

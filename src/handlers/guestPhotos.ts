@@ -76,7 +76,9 @@ const BY_OWNER_INDEX = "byOwner";
  * @returns Presigned URL valid for {@link VIEW_URL_EXPIRES_SECONDS} seconds
  */
 async function presignedImageUrl(s3Key: string): Promise<string> {
+  // 1. Infer Content-Type from key extension (helps browsers render images).
   const responseContentType = contentTypeForS3Key(s3Key);
+  // 2. Sign a time-limited GET URL for the private bucket object.
   return getSignedUrl(
     s3Client,
     new GetObjectCommand({
@@ -100,6 +102,7 @@ async function presignedImageUrl(s3Key: string): Promise<string> {
  * @returns Number of photos owned by `guest#${identityId}`
  */
 async function countGuestPhotos(identityId: string): Promise<number> {
+  // Count rows on GSI byOwner for `guest#{identityId}` (metadata only, no full items).
   const result = await docClient.send(
     new QueryCommand({
       TableName: photosTableName(),
@@ -135,11 +138,13 @@ async function countGuestPhotos(identityId: string): Promise<number> {
 export const uploadUrl = withHandlerLogging("guestUploadUrl", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
+  // 1. Require `X-Guest-Identity-Id` header (no JWT on guest routes).
   const auth = requireGuestIdentityId(event);
   if (!auth.ok) {
     return auth.response;
   }
 
+  // 2. Enforce guest photo limit before minting another upload URL.
   const count = await countGuestPhotos(auth.identityId);
   if (count >= GUEST_PHOTO_LIMIT) {
     return json(403, {
@@ -149,6 +154,7 @@ export const uploadUrl = withHandlerLogging("guestUploadUrl", async (
     });
   }
 
+  // 3. Parse and validate `{ contentType }` from the request body.
   const parsedBody = parseJsonBody(event.body);
   if (!parsedBody.ok) {
     return parsedBody.response;
@@ -159,11 +165,13 @@ export const uploadUrl = withHandlerLogging("guestUploadUrl", async (
     return json(400, { error: zodErrorMessage(body.error) });
   }
 
+  // 4. Allocate photoId and build S3 key under `guests/{identityId}/photos/`.
   const photoId = randomUUID();
   const ext = extensionForContentType(body.data.contentType);
   const s3Key = `${s3KeyPrefixForGuest(auth.identityId)}${photoId}${ext}`;
 
   try {
+    // 5. Mint presigned PUT URL; client uploads bytes directly to S3.
     const uploadUrl = await getSignedUrl(
       s3Client,
       new PutObjectCommand({
@@ -207,11 +215,13 @@ export const uploadUrl = withHandlerLogging("guestUploadUrl", async (
 export const create = withHandlerLogging("guestCreate", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
+  // 1. Require `X-Guest-Identity-Id` header (no JWT on guest routes).
   const auth = requireGuestIdentityId(event);
   if (!auth.ok) {
     return auth.response;
   }
 
+  // 2. Parse and validate `{ photoId, s3Key, caption }` from the request body.
   const parsedBody = parseJsonBody(event.body);
   if (!parsedBody.ok) {
     return parsedBody.response;
@@ -222,12 +232,14 @@ export const create = withHandlerLogging("guestCreate", async (
     return json(400, { error: zodErrorMessage(body.error) });
   }
 
+  // 3. Reject s3Key outside this guest's prefix.
   if (!isS3KeyOwnedByGuest(body.data.s3Key, auth.identityId)) {
     return json(403, {
       error: "s3Key does not belong to this guest identity",
     });
   }
 
+  // 4. Re-check limit (race: two tabs could both pass upload-url).
   const count = await countGuestPhotos(auth.identityId);
   if (count >= GUEST_PHOTO_LIMIT) {
     return json(403, {
@@ -235,6 +247,7 @@ export const create = withHandlerLogging("guestCreate", async (
     });
   }
 
+  // 5. Build metadata row with `guest#{identityId}` ownerId and createdAt.
   const item: PhotoItem = {
     ...body.data,
     ownerId: guestOwnerId(auth.identityId),
@@ -242,6 +255,7 @@ export const create = withHandlerLogging("guestCreate", async (
   };
 
   try {
+    // 6. Persist metadata in DynamoDB (bytes already in S3 from client PUT).
     await docClient.send(
       new PutCommand({
         TableName: photosTableName(),
@@ -277,12 +291,14 @@ export const create = withHandlerLogging("guestCreate", async (
 export const list = withHandlerLogging("guestList", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
+  // 1. Require `X-Guest-Identity-Id` header (no JWT on guest routes).
   const auth = requireGuestIdentityId(event);
   if (!auth.ok) {
     return auth.response;
   }
 
   try {
+    // 2. Query DynamoDB GSI byOwner for this guest's metadata (newest first).
     const result = await docClient.send(
       new QueryCommand({
         TableName: photosTableName(),
@@ -295,6 +311,7 @@ export const list = withHandlerLogging("guestList", async (
       }),
     );
     const items = (result.Items ?? []) as PhotoItem[];
+    // 3. Attach a presigned GET URL per row (does not fetch image bytes here).
     const itemsWithUrls: PhotoListItem[] = await Promise.all(
       items.map(async (photo) => ({
         ...photo,
@@ -302,6 +319,7 @@ export const list = withHandlerLogging("guestList", async (
         imageUrlExpiresInSeconds: VIEW_URL_EXPIRES_SECONDS,
       })),
     );
+    // 4. Return items plus limit/remaining slots for the UI.
     return json(200, {
       items: itemsWithUrls,
       limit: GUEST_PHOTO_LIMIT,

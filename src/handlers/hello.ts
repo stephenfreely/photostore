@@ -24,6 +24,7 @@ export const hello = withHandlerLogging("hello", async (
 ): Promise<APIGatewayProxyStructuredResultV2> => ({
   statusCode: 200,
   headers: { "content-type": "application/json" },
+  // Echo selected API Gateway event fields for learning / smoke tests.
   body: JSON.stringify({
     message: "ok",
     routeKey: event.routeKey,

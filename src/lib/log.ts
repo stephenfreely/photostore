@@ -98,12 +98,15 @@ export const logError = (
 export const withHandlerLogging =
   (handler: string, fn: Handler): Handler =>
   async (event) => {
+    // 1. Log incoming request metadata (one JSON line to CloudWatch).
     logRequest(handler, event);
     try {
+      // 2. Run the handler and log the HTTP status on success.
       const response = await fn(event);
       logResponse(handler, response);
       return response;
     } catch (err) {
+      // 3. Log and rethrow so Lambda still marks the invocation failed.
       logError(handler, "unhandled exception", err);
       throw err;
     }

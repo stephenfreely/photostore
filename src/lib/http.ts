@@ -40,6 +40,7 @@ export const parseJsonBody = (
 ):
   | { ok: true; value: unknown }
   | { ok: false; response: APIGatewayProxyStructuredResultV2 } => {
+  // 1. POST handlers require a body string from API Gateway.
   if (!body) {
     return {
       ok: false,
@@ -47,6 +48,7 @@ export const parseJsonBody = (
     };
   }
   try {
+    // 2. Parse JSON; return 400 on syntax errors.
     return { ok: true, value: JSON.parse(body) };
   } catch {
     return {

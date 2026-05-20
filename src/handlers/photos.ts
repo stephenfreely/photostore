@@ -94,7 +94,9 @@ export type PhotoListItem = PhotoItem & {
  * @returns Presigned URL valid for {@link VIEW_URL_EXPIRES_SECONDS} seconds
  */
 async function presignedImageUrl(s3Key: string): Promise<string> {
+  // 1. Infer Content-Type from key extension (helps browsers render images).
   const responseContentType = contentTypeForS3Key(s3Key);
+  // 2. Sign a time-limited GET URL for the private bucket object.
   return getSignedUrl(
     s3Client,
     new GetObjectCommand({
@@ -119,11 +121,13 @@ async function presignedImageUrl(s3Key: string): Promise<string> {
 export const uploadUrl = withHandlerLogging("uploadUrl", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
+  // 1. Require a signed-in user (JWT sub → ownerId).
   const auth = requireOwnerId(event);
   if (!auth.ok) {
     return auth.response;
   }
 
+  // 2. Parse and validate `{ contentType }` from the request body.
   const parsedBody = parseJsonBody(event.body);
   if (!parsedBody.ok) {
     return parsedBody.response;
@@ -134,11 +138,13 @@ export const uploadUrl = withHandlerLogging("uploadUrl", async (
     return json(400, { error: zodErrorMessage(body.error) });
   }
 
+  // 3. Allocate photoId and build S3 key under `users/{sub}/photos/`.
   const photoId = randomUUID();
   const ext = extensionForContentType(body.data.contentType);
   const s3Key = `${s3KeyPrefixForOwner(auth.ownerId)}${photoId}${ext}`;
 
   try {
+    // 4. Mint presigned PUT URL; client uploads bytes directly to S3.
     const uploadUrl = await getSignedUrl(
       s3Client,
       new PutObjectCommand({
@@ -172,11 +178,13 @@ export const uploadUrl = withHandlerLogging("uploadUrl", async (
 export const create = withHandlerLogging("create", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
+  // 1. Require a signed-in user (JWT sub → ownerId).
   const auth = requireOwnerId(event);
   if (!auth.ok) {
     return auth.response;
   }
 
+  // 2. Parse and validate `{ photoId, s3Key, caption }` from the request body.
   const parsedBody = parseJsonBody(event.body);
   if (!parsedBody.ok) {
     return parsedBody.response;
@@ -187,12 +195,14 @@ export const create = withHandlerLogging("create", async (
     return json(400, { error: zodErrorMessage(body.error) });
   }
 
+  // 3. Reject s3Key outside this user's prefix (prevent claiming others' objects).
   if (!isS3KeyOwnedBy(body.data.s3Key, auth.ownerId)) {
     return json(403, {
       error: "s3Key does not belong to the authenticated user",
     });
   }
 
+  // 4. Build metadata row with server-side ownerId and createdAt.
   const item: PhotoItem = {
     ...body.data,
     ownerId: auth.ownerId,
@@ -200,6 +210,7 @@ export const create = withHandlerLogging("create", async (
   };
 
   try {
+    // 5. Persist metadata in DynamoDB (bytes already in S3 from client PUT).
     await docClient.send(
       new PutCommand({
         TableName: photosTableName(),
@@ -225,14 +236,14 @@ export const create = withHandlerLogging("create", async (
 export const list = withHandlerLogging("list", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
+  // 1. Require a signed-in user (JWT sub → ownerId).
   const auth = requireOwnerId(event);
   if (!auth.ok) {
     return auth.response;
   }
 
   try {
-    // QueryCommand: read all rows for this user on GSI byOwner (ownerId + createdAt).
-    // Does not fetch image bytes — only metadata including s3Key; imageUrl comes next.
+    // 2. Query DynamoDB GSI byOwner for this user's metadata (newest first).
     const result = await docClient.send(
       new QueryCommand({
         TableName: photosTableName(),
@@ -243,6 +254,7 @@ export const list = withHandlerLogging("list", async (
       }),
     );
     const items = (result.Items ?? []) as PhotoItem[];
+    // 3. Attach a presigned GET URL per row (does not fetch image bytes here).
     const itemsWithUrls: PhotoListItem[] = await Promise.all(
       items.map(async (photo) => ({
         ...photo,
@@ -250,6 +262,7 @@ export const list = withHandlerLogging("list", async (
         imageUrlExpiresInSeconds: VIEW_URL_EXPIRES_SECONDS,
       })),
     );
+    // 4. Return metadata + view URLs.
     return json(200, { items: itemsWithUrls });
   } catch (err) {
     logError("list", "Query failed", err);
@@ -286,11 +299,13 @@ export const list = withHandlerLogging("list", async (
 export const merge = withHandlerLogging("merge", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
+  // 1. Require a signed-in user (JWT sub → ownerId).
   const auth = requireOwnerId(event);
   if (!auth.ok) {
     return auth.response;
   }
 
+  // 2. Parse and validate `{ guestIdentityId }` from the request body.
   const parsedBody = parseJsonBody(event.body);
   if (!parsedBody.ok) {
     return parsedBody.response;
@@ -304,6 +319,7 @@ export const merge = withHandlerLogging("merge", async (
   const guestOwner = guestOwnerId(body.data.guestIdentityId);
   const bucket = photosBucketName();
 
+  // 3. Load all guest photo metadata from DynamoDB (GSI byOwner).
   let guestItems: PhotoItem[];
   try {
     const result = await docClient.send(
@@ -326,6 +342,7 @@ export const merge = withHandlerLogging("merge", async (
 
   const merged: PhotoItem[] = [];
 
+  // 4. For each guest photo: move S3 object, then re-key the DynamoDB row.
   for (const photo of guestItems) {
     const filename = photo.s3Key.split("/").pop();
     if (!filename) {
@@ -334,6 +351,7 @@ export const merge = withHandlerLogging("merge", async (
     const newS3Key = `${s3KeyPrefixForOwner(auth.ownerId)}${filename}`;
 
     try {
+      // 4a. Copy object from `guests/{id}/photos/...` to `users/{sub}/photos/...`.
       await s3Client.send(
         new CopyObjectCommand({
           Bucket: bucket,
@@ -341,6 +359,7 @@ export const merge = withHandlerLogging("merge", async (
           Key: newS3Key,
         }),
       );
+      // 4b. Remove the old guest S3 object.
       await s3Client.send(
         new DeleteObjectCommand({
           Bucket: bucket,
@@ -354,6 +373,7 @@ export const merge = withHandlerLogging("merge", async (
         s3Key: newS3Key,
       };
 
+      // 4c. Replace DynamoDB row (delete + put keeps photoId, updates ownerId/s3Key).
       await docClient.send(
         new DeleteCommand({
           TableName: photosTableName(),
@@ -377,5 +397,6 @@ export const merge = withHandlerLogging("merge", async (
     }
   }
 
+  // 5. Return merged metadata (same shape as list items, without presigned URLs).
   return json(200, { mergedCount: merged.length, photos: merged });
 });

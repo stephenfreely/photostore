@@ -128,12 +128,14 @@ const GUEST_IDENTITY_ID_PATTERN =
 export const getGuestIdentityId = (
   event: APIGatewayProxyEventV2,
 ): string | null => {
+  // 1. Find header case-insensitively (API Gateway may vary casing).
   const headers = event.headers ?? {};
   const entry = Object.entries(headers).find(
     ([name]) => name.toLowerCase() === GUEST_IDENTITY_HEADER,
   );
   const value = entry?.[1];
   if (typeof value !== "string") return null;
+  // 2. Accept only Cognito identity id shape (`region:uuid`).
   const trimmed = value.trim();
   if (!GUEST_IDENTITY_ID_PATTERN.test(trimmed)) return null;
   return trimmed;

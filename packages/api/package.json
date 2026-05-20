@@ -1,0 +1,31 @@
+{
+  "name": "@photostore/api",
+  "private": true,
+  "scripts": {
+    "build": "serverless package",
+    "print": "serverless print",
+    "deploy": "serverless deploy",
+    "deploy:sync": "serverless deploy && ./scripts/sync-client-env.sh",
+    "remove": "serverless remove",
+    "remove:safe": "./scripts/backup-client-env.sh && serverless remove",
+    "env:sync": "./scripts/sync-client-env.sh",
+    "env:backup": "./scripts/backup-client-env.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.161",
+    "@types/node": "^25.8.0",
+    "esbuild": "^0.28.0",
+    "prettier": "^3.5.0",
+    "serverless": "^3.40.0",
+    "serverless-esbuild": "^1.57.1",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1048.0",
+    "@aws-sdk/client-s3": "^3.1048.0",
+    "@aws-sdk/lib-dynamodb": "^3.1048.0",
+    "@aws-sdk/s3-request-presigner": "^3.1048.0",
+    "zod": "^4.4.3"
+  }
+}

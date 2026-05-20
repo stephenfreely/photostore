@@ -1,33 +1,28 @@
 {
-  "name": "photostore-learn",
+  "name": "photostore",
   "private": true,
+  "packageManager": "yarn@4.15.0",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "serverless package",
-    "print": "serverless print",
-    "deploy": "serverless deploy",
-    "deploy:sync": "serverless deploy && ./scripts/sync-client-env.sh",
-    "remove": "serverless remove",
-    "remove:safe": "./scripts/backup-client-env.sh && serverless remove",
-    "env:sync": "./scripts/sync-client-env.sh",
-    "env:backup": "./scripts/backup-client-env.sh",
-    "typecheck": "tsc --noEmit",
+    "build": "yarn workspace @photostore/api build",
+    "print": "yarn workspace @photostore/api print",
+    "deploy": "yarn workspace @photostore/api deploy",
+    "deploy:sync": "yarn workspace @photostore/api deploy:sync",
+    "remove": "yarn workspace @photostore/api remove",
+    "remove:safe": "yarn workspace @photostore/api remove:safe",
+    "env:sync": "yarn workspace @photostore/api env:sync",
+    "env:backup": "yarn workspace @photostore/api env:backup",
+    "typecheck": "yarn workspaces foreach -Apt run typecheck",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "dev": "yarn workspace @photostore/client dev",
+    "client:build": "yarn workspace @photostore/client build",
+    "client:lint": "yarn workspace @photostore/client lint",
+    "client:preview": "yarn workspace @photostore/client preview"
   },
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.161",
-    "@types/node": "^25.8.0",
-    "esbuild": "^0.28.0",
-    "prettier": "^3.5.0",
-    "serverless": "^3.40.0",
-    "serverless-esbuild": "^1.57.1",
-    "typescript": "^6.0.3"
-  },
-  "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.1048.0",
-    "@aws-sdk/client-s3": "^3.1048.0",
-    "@aws-sdk/lib-dynamodb": "^3.1048.0",
-    "@aws-sdk/s3-request-presigner": "^3.1048.0",
-    "zod": "^4.4.3"
+    "prettier": "^3.5.0"
   }
 }

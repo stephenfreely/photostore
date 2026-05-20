@@ -1,46 +1,99 @@
-# photostore-learn
+# photostore
 
-AWS Serverless learning project: **Lambda**, **API Gateway (HTTP API)**, **DynamoDB**, **S3**, and **Amazon Cognito**—through **step 8** (JWT auth, per-user photos), plus **guest uploads** (Identity Pool, max 2 photos before sign-in), **merge on sign-in**, and **client env sync** after deploy. Optional stretch: **CloudFront** (step 9).
+Yarn workspaces monorepo for the **photostore-learn** AWS Serverless API and its **React + Vite** client.
+
+| Package | Path | Description |
+| ------- | ---- | ----------- |
+| `@photostore/api` | `packages/api` | Lambda, API Gateway, DynamoDB, S3, Cognito (Serverless v3) |
+| `@photostore/client` | `packages/client` | React SPA (Vite, Amplify, TanStack Query) |
+
+The API covers **step 8** (JWT auth, per-user photos), plus **guest uploads** (Identity Pool, max 2 photos before sign-in), **merge on sign-in**, and **client env sync** after deploy. Optional stretch: **CloudFront** (step 9).
 
 Each service is explained where it appears in the repo; start with [AWS services in this project](#aws-services-in-this-project) in the stack reference for a one-page glossary.
 
 ## Prerequisites
 
-- Node.js and npm
+- Node.js and **Yarn 4** (`corepack enable` then `yarn --version`)
 - AWS CLI configured (`aws sts get-caller-identity` works)
-- **`jq`** (for `npm run env:sync` — writes the React client `.env` from stack outputs)
+- **`jq`** (for `yarn env:sync` — writes the React client `.env` from stack outputs)
 - IAM permissions to deploy (CloudFormation, Lambda, API Gateway, Cognito, etc.)
+
+## Monorepo layout
+
+```text
+photostore/                          # Yarn workspaces root (package.json scripts)
+  packages/
+    api/                               # @photostore/api — Serverless backend
+      serverless.yml
+      package.json
+      src/
+        handlers/                      # Lambda entry points
+        lib/                           # auth, http, log
+        clients/                       # DynamoDB, S3 SDK wrappers
+        schemas/                       # Zod validation
+      scripts/
+        sync-client-env.sh             # → packages/client/.env
+        backup-client-env.sh
+      docs/
+        env-configuration.md
+      .env.example                     # optional local overrides (not used at Lambda runtime)
+    client/                            # @photostore/client — React + Vite SPA
+      package.json
+      index.html
+      .env.example                     # copy to .env; filled by yarn env:sync
+      src/
+        api/                           # fetch wrappers (photos, guest, health)
+        components/                    # AuthPanel, PhotoGallery, PhotoUpload, …
+        hooks/                         # useAuth, usePhotos, useGuestPhotos, …
+        lib/                           # api.ts (JWT/guest headers), env, mergeGuestOnLogin
+        amplify.ts                     # Cognito + Identity Pool config
+  .yarnrc.yml
+  yarn.lock
+```
+
+Package-specific notes: [`packages/client/README.md`](packages/client/README.md).
 
 ## Commands (use project-local Serverless v3)
 
-Global `serverless` may be **v4**, which requires a Serverless.com login. This repo pins **Serverless Framework v3** so you can work without that:
+Global `serverless` may be **v4**, which requires a Serverless.com login. The API package pins **Serverless Framework v3** so you can work without that:
 
 ```bash
-npm install
-npm run print              # validate serverless.yml
-npm run deploy             # deploy stack
-npm run deploy:sync        # deploy + write ../photostoreclient/.env from outputs
-npm run env:sync           # sync client .env only (after deploy)
-npm run env:backup         # snapshot client .env before remove
-npm run remove:safe        # backup client .env, then serverless remove
-npx serverless invoke -f hello --log
+yarn install
+yarn print                 # validate packages/api/serverless.yml
+yarn deploy                # deploy API stack
+yarn deploy:sync           # deploy + write packages/client/.env from outputs
+yarn env:sync              # sync client .env only (after deploy)
+yarn env:backup            # snapshot client .env before remove
+yarn remove:safe           # backup client .env, then serverless remove
+yarn dev                   # Vite dev server (@photostore/client)
+yarn client:build          # production client build
+yarn typecheck             # tsc --noEmit in all workspaces
+yarn format                # Prettier (repo root)
+yarn workspace @photostore/api exec serverless invoke -f hello --log
 ```
 
-See [Client environment sync](#client-environment-sync) and [`docs/env-configuration.md`](docs/env-configuration.md) for what survives `deploy` vs `remove`.
+Run Serverless from the API package when you need flags not wrapped above:
+
+```bash
+cd packages/api && yarn exec serverless info
+cd packages/api && yarn exec serverless logs -f hello -t
+```
+
+See [Client environment sync](#client-environment-sync) and [`packages/api/docs/env-configuration.md`](packages/api/docs/env-configuration.md) for what survives `deploy` vs `remove`.
 
 ## Client environment sync
 
-Deploy creates AWS resources; the **React client** (`../photostoreclient`) needs matching `VITE_*` variables. They are **not** read from a backend `.env` at Lambda runtime — CloudFormation injects `PHOTOS_TABLE`, `PHOTOS_BUCKET`, etc. into functions directly.
+Deploy creates AWS resources; the **React client** (`packages/client`) needs matching `VITE_*` variables. They are **not** read from a backend `.env` at Lambda runtime — CloudFormation injects `PHOTOS_TABLE`, `PHOTOS_BUCKET`, etc. into functions directly.
 
 | Layer              | Where                         | Survives `remove`? |
 | ------------------ | ----------------------------- | ------------------ |
-| Backend (Lambda)   | `serverless.yml` → stack      | No — stack deleted |
-| Frontend (Vite)    | `../photostoreclient/.env`    | File remains (stale ids) |
+| Backend (Lambda)   | `packages/api/serverless.yml` → stack | No — stack deleted |
+| Frontend (Vite)    | `packages/client/.env`        | File remains (stale ids) |
 
 ```bash
-npm run deploy:sync    # deploy + write client .env
+yarn deploy:sync       # deploy + write client .env
 # or separately:
-npm run deploy && npm run env:sync
+yarn deploy && yarn env:sync
 ```
 
 `env:sync` reads CloudFormation outputs and writes:
@@ -53,14 +106,14 @@ VITE_IDENTITY_POOL_ID=...
 VITE_AWS_REGION=us-east-1
 ```
 
-A snapshot is saved to `.deploy/outputs-dev.json` (gitignored). Before tearing down the stack:
+A snapshot is saved to `packages/api/.deploy/outputs-dev.json` (gitignored). Before tearing down the stack:
 
 ```bash
-npm run env:backup      # → .deploy/env-backups/client-env-<timestamp>.env
-npm run remove:safe     # backup + serverless remove
+yarn env:backup         # → packages/api/.deploy/env-backups/client-env-<timestamp>.env
+yarn remove:safe        # backup + serverless remove
 ```
 
-After a **fresh** deploy, run `env:sync` again and restart the Vite dev server. Full notes: [`docs/env-configuration.md`](docs/env-configuration.md).
+After a **fresh** deploy, run `env:sync` again and restart the Vite dev server. Full notes: [`packages/api/docs/env-configuration.md`](packages/api/docs/env-configuration.md).
 
 After deploy, call **`GET /hello`** using the HTTP API base URL from the deploy output:
 
@@ -70,9 +123,9 @@ curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello"
 
 ## Current stack
 
-- **Service:** `photostore-learn` (see `serverless.yml`)
+- **Service:** `photostore-learn` (see `packages/api/serverless.yml`)
 - **Stage:** `dev` (default)
-- **Lambdas:** `hello`, `createPhoto`, `listPhotos`, `uploadPhotoUrl`, `mergePhotos`, `guestUploadPhotoUrl`, `guestCreatePhoto`, `guestListPhotos` (TypeScript in `src/`, bundled with esbuild)
+- **Lambdas:** `hello`, `createPhoto`, `listPhotos`, `uploadPhotoUrl`, `mergePhotos`, `guestUploadPhotoUrl`, `guestCreatePhoto`, `guestListPhotos` (TypeScript in `packages/api/src/`, bundled with esbuild)
 - **Cognito:** User Pool + SPA app client + **Identity Pool** (unauthenticated guests) — [Cognito & JWT auth](#cognito--jwt-auth-steps-68) · [Guest photos](#guest-photo-upload-identity-pool)
 - **API (HTTP API, CORS enabled):**
 
@@ -90,14 +143,14 @@ curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello"
 - **DynamoDB:** `photostore-learn-dev-photos` — metadata only (`s3Key` points at S3) — [Storage: S3 vs DynamoDB](#storage-s3-vs-dynamodb-what-lives-where) · [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml)
 - **S3:** private bucket; signed-in objects under `users/{sub}/photos/`; guest objects under `guests/{identityId}/photos/` — [Storage: S3 vs DynamoDB](#storage-s3-vs-dynamodb-what-lives-where) · [S3 wiring](#s3-wiring-in-serverlessyml)
 
-After deploy, note **Outputs**: `UserPoolId`, `UserPoolClientId`, `IdentityPoolId`, `HttpApiUrl` (from Serverless), `CognitoIssuer`. Run **`npm run env:sync`** to write `VITE_*` values into `../photostoreclient/.env`.
+After deploy, note **Outputs**: `UserPoolId`, `UserPoolClientId`, `IdentityPoolId`, `HttpApiUrl` (from Serverless), `CognitoIssuer`. Run **`yarn env:sync`** to write `VITE_*` values into `packages/client/.env`.
 
-### Source layout (`src/`)
+### Source layout (`packages/api/src/`)
 
 Handlers, shared helpers, and AWS clients are separated so new routes and domains have a clear home:
 
 ```text
-src/
+packages/api/src/
   handlers/          # Lambda entry points (thin: parse event → respond)
     hello.ts         # GET /hello
     photos.ts        # POST/GET /photos*, POST /photos/merge
@@ -115,6 +168,19 @@ src/
 ```
 
 When you add a new domain (e.g. albums), add `handlers/albums.ts` plus any `schemas/albums.ts`. Put new AWS services under `clients/`.
+
+### Client source layout (`packages/client/src/`)
+
+```text
+packages/client/src/
+  api/                 # photos.ts, guestPhotos.ts, health.ts
+  components/          # AuthPanel, PhotoGallery, PhotoUpload, GuestPhotoSection, …
+  hooks/               # useAuth, usePhotos, useGuestPhotos, usePendingGuestMerge, …
+  lib/                 # api.ts (JWT/guest headers), env.ts, mergeGuestOnLogin.ts
+  amplify.ts           # Amplify.configure (User Pool + Identity Pool)
+  App.tsx              # shell: auth, upload, gallery, guest section
+  main.tsx             # entry (imports amplify)
+```
 
 ### Storage: S3 vs DynamoDB (what lives where)
 
@@ -141,7 +207,7 @@ The app splits **files** from **catalog rows**. Lambda and API Gateway never rec
 
 **Why split them:** S3 is built for large, cheap object storage; DynamoDB is built for fast queries (e.g. “all photos for this user” via GSI `byOwner`). Presigned URLs let clients upload and download without proxying megabytes through API Gateway or Lambda.
 
-See `PhotoItem` in `src/handlers/photos.ts` and the three HTTP steps below.
+See `PhotoItem` in `packages/api/src/handlers/photos.ts` and the three HTTP steps below.
 
 ### Photo upload flow (steps 5 + 7–8)
 
@@ -201,9 +267,9 @@ curl -s -o /dev/null -w "%{http_code}\n" "$API/photos"
 
 #### Handlers and routes (same upload flow)
 
-One user journey, **three HTTP steps**, **two API Lambdas** in `src/handlers/photos.ts`. Step 2 has no Lambda—the client talks to S3 directly.
+One user journey, **three HTTP steps**, **two API Lambdas** in `packages/api/src/handlers/photos.ts`. Step 2 has no Lambda—the client talks to S3 directly.
 
-| Step     | Route                     | `serverless.yml` function | Handler (`src/handlers/photos.ts`) | What it does                                                                    |
+| Step     | Route                     | `serverless.yml` function | Handler (`packages/api/src/handlers/photos.ts`) | What it does                                                                    |
 | -------- | ------------------------- | ------------------------- | ---------------------------------- | ------------------------------------------------------------------------------- |
 | **1**    | `POST /photos/upload-url` | `uploadPhotoUrl`          | `uploadUrl`                        | Presign S3 `PUT`; return `photoId`, `s3Key`, `uploadUrl`                        |
 | **2**    | `PUT` presigned URL       | —                         | —                                  | Client uploads file bytes to **S3** (not API Gateway)                           |
@@ -240,11 +306,11 @@ Configure Amplify with `identityPoolId` (from deploy output / `VITE_IDENTITY_POO
 | **Guest** | `guest#{identityId}` | `guests/{identityId}/photos/{photoId}.{ext}` |
 | **Signed-in** | JWT `sub` | `users/{sub}/photos/{photoId}.{ext}` |
 
-Guest routes validate the header in `src/lib/auth.ts` (`GUEST_PHOTO_LIMIT = 2`). Responses include `remainingUploads` and `limit`.
+Guest routes validate the header in `packages/api/src/lib/auth.ts` (`GUEST_PHOTO_LIMIT = 2`). Responses include `remainingUploads` and `limit`.
 
 #### Guest API routes
 
-| Step | Route | Auth | Handler (`guestPhotos.ts`) |
+| Step | Route | Auth | Handler (`packages/api/src/handlers/guestPhotos.ts`) |
 | ---- | ----- | ---- | -------------------------- |
 | 1 | `POST /guest/photos/upload-url` | `X-Guest-Identity-Id` | `uploadUrl` |
 | 2 | `PUT` presigned URL | — | Client → S3 |
@@ -334,7 +400,7 @@ flowchart TB
 
 ### Merge guest photos after sign-in
 
-**`mergePhotos`** — Lambda `src/handlers/photos.merge`, route **`POST /photos/merge`**, JWT authorizer `cognitoJwt` in `serverless.yml`.
+**`mergePhotos`** — Lambda `packages/api/src/handlers/photos.merge`, route **`POST /photos/merge`**, JWT authorizer `cognitoJwt` in `serverless.yml`.
 
 Moves guest uploads into the signed-in user's account after Cognito login. Before sign-in, the SPA uses the Identity Pool (unauthenticated) and **`/guest/photos*`** routes. Bytes live at `guests/{identityId}/photos/` in S3 and metadata uses DynamoDB `ownerId = guest#{identityId}`. After sign-in, this endpoint re-homes those rows and objects under `users/{sub}/photos/` where `sub` is the JWT subject.
 
@@ -355,7 +421,7 @@ Moves guest uploads into the signed-in user's account after Cognito login. Befor
 | Path | `/photos/merge` |
 | Auth | `Authorization: Bearer <Cognito IdToken>` |
 | Headers | No `X-Guest-Identity-Id` (JWT only) |
-| Body | `{ "guestIdentityId": "us-east-1:uuid" }` — Cognito Identity Pool id (`region:uuid`); validated in `src/schemas/merge.ts` |
+| Body | `{ "guestIdentityId": "us-east-1:uuid" }` — Cognito Identity Pool id (`region:uuid`); validated in `packages/api/src/schemas/merge.ts` |
 
 `guestIdentityId` must be the **same** id sent as `X-Guest-Identity-Id` during guest uploads so the handler can find `ownerId = guest#{guestIdentityId}`.
 
@@ -561,7 +627,7 @@ export async function uploadPhoto(file: File, caption: string) {
 
 **Note:** This example is **pre-auth** (step 5). For Cognito + JWT use [Authenticated React / Amplify flow](#authenticated-react--amplify-flow).
 
-Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `image/jpeg`). Presigned URLs expire after **5 minutes** (`UPLOAD_URL_EXPIRES_SECONDS` in `src/clients/s3.ts`).
+Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `image/jpeg`). Presigned URLs expire after **5 minutes** (`UPLOAD_URL_EXPIRES_SECONDS` in `packages/api/src/clients/s3.ts`).
 
 **How presigning works:** [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works) (recommended read after your first successful upload).
 
@@ -647,12 +713,12 @@ The client **cannot** choose `ownerId` in the request body. Lambda reads it from
 Authorization: Bearer <IdToken>
   → API Gateway checks signature / iss / aud / exp
   → Lambda: event.requestContext.authorizer.jwt.claims.sub
-  → src/lib/auth.ts: getOwnerId() / requireOwnerId()
-  → src/handlers/photos.ts: ownerId on PutItem; Query byOwner; s3Key prefix users/{ownerId}/photos/
+  → packages/api/src/lib/auth.ts: getOwnerId() / requireOwnerId()
+  → packages/api/src/handlers/photos.ts: ownerId on PutItem; Query byOwner; s3Key prefix users/{ownerId}/photos/
 ```
 
 ```ts
-// src/lib/auth.ts — sub from the JWT, exposed as ownerId to the rest of the app
+// packages/api/src/lib/auth.ts — sub from the JWT, exposed as ownerId to the rest of the app
 const sub = event.requestContext.authorizer.jwt.claims.sub;
 // same value stored on each photo row as ownerId
 ```
@@ -821,9 +887,9 @@ resources:
 | `CognitoIssuer`    | Must match JWT authorizer `issuerUrl` (debugging)                                |
 | `HttpApiUrl`       | From **Serverless** automatically (do not duplicate in `Outputs`) — API base URL |
 
-Use **`npm run env:sync`** to populate all `VITE_*` values in `../photostoreclient/.env` after deploy.
+Use **`yarn env:sync`** to populate all `VITE_*` values in `packages/client/.env` after deploy.
 
-Lambda does **not** verify JWTs itself for protected routes; API Gateway does. `src/lib/auth.ts` only reads **`sub`** from claims the authorizer already validated.
+Lambda does **not** verify JWTs itself for protected routes; API Gateway does. `packages/api/src/lib/auth.ts` only reads **`sub`** from claims the authorizer already validated.
 
 #### 5. Identity Pool — guest `identityId` (no JWT on `/guest/*`)
 
@@ -849,7 +915,7 @@ CognitoIdentityPoolRoles:
 | `AllowUnauthenticatedIdentities` | Browser can call `GetId` before sign-in |
 | `CognitoUnauthenticatedRole` | Minimal policy (`cognito-identity:GetId` only) |
 | Guest routes | No `authorizer` in `serverless.yml`; Lambda trusts `X-Guest-Identity-Id` + prefix checks |
-| `IdentityPoolId` output | `VITE_IDENTITY_POOL_ID` via `npm run env:sync` |
+| `IdentityPoolId` output | `VITE_IDENTITY_POOL_ID` via `yarn env:sync` |
 
 ### JWT request flow
 
@@ -874,7 +940,7 @@ sequenceDiagram
   end
 ```
 
-API Gateway validates the JWT **before** Lambda runs. Handlers read `sub` via `src/lib/auth.ts` as `ownerId`.
+API Gateway validates the JWT **before** Lambda runs. Handlers read `sub` via `packages/api/src/lib/auth.ts` as `ownerId`.
 
 #### JWT request checklist
 
@@ -921,13 +987,9 @@ API Gateway validates the JWT **before** Lambda runs. Handlers read `sub` via `s
 
 ### Authenticated React / Amplify flow
 
-Install in your React app:
+The SPA lives in **`packages/client`** (`@photostore/client`). Dependencies such as `aws-amplify` are already in that package — from the repo root run `yarn install`, then `yarn dev`.
 
-```bash
-npm install aws-amplify
-```
-
-Env (Vite example) — values from `npx serverless deploy` **Outputs**:
+Env (Vite) — values from deploy **Outputs** or **`yarn env:sync`**:
 
 ```env
 VITE_API_URL=https://<api-id>.execute-api.us-east-1.amazonaws.com
@@ -937,20 +999,22 @@ VITE_IDENTITY_POOL_ID=us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 VITE_AWS_REGION=us-east-1
 ```
 
-Or run **`npm run env:sync`** from the repo root after deploy (writes `../photostoreclient/.env` automatically).
+Or run **`yarn env:sync`** from the repo root after deploy (writes `packages/client/.env` automatically).
 
 #### Configure Amplify Auth
 
 ```ts
-// src/amplify.ts
+// packages/client/src/amplify.ts
 import { Amplify } from "aws-amplify";
+import { env } from "./lib/env";
 
 Amplify.configure({
   Auth: {
     Cognito: {
-      userPoolId: import.meta.env.VITE_USER_POOL_ID,
-      userPoolClientId: import.meta.env.VITE_USER_POOL_CLIENT_ID,
-      identityPoolId: import.meta.env.VITE_IDENTITY_POOL_ID,
+      userPoolId: env.userPoolId,
+      userPoolClientId: env.userPoolClientId,
+      identityPoolId: env.identityPoolId,
+      allowGuestAccess: true,
     },
   },
 });
@@ -989,105 +1053,28 @@ sequenceDiagram
 
 #### Auth helper + API headers
 
+The client centralizes JWT and guest headers in **`packages/client/src/lib/api.ts`** (`authHeaders`, `guestHeaders`, `apiFetch`). Photo routes are in **`packages/client/src/api/photos.ts`** and **`packages/client/src/api/guestPhotos.ts`**.
+
 ```ts
-// src/lib/apiAuth.ts
+// packages/client/src/lib/api.ts (excerpt)
 import { fetchAuthSession } from "aws-amplify/auth";
+import { env } from "./env";
 
-const API = import.meta.env.VITE_API_URL;
-
-/** Headers for protected photo routes (steps 7–8). */
-export async function authHeaders(): Promise<HeadersInit> {
-  const session = await fetchAuthSession();
+export async function authHeaders(json = true): Promise<Record<string, string>> {
+  const session = await fetchAuthSession({ forceRefresh: true });
   const token = session.tokens?.idToken?.toString();
   if (!token) throw new Error("Not signed in");
-  return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-  };
-}
-
-export { API };
-```
-
-#### Upload with JWT (full example)
-
-```ts
-// src/lib/uploadPhoto.ts
-import { signIn } from "aws-amplify/auth";
-import { API, authHeaders } from "./apiAuth";
-
-export async function signInUser(email: string, password: string) {
-  await signIn({ username: email, password });
-}
-
-export async function uploadPhoto(file: File, caption: string) {
-  const headers = await authHeaders();
-
-  const contentType =
-    file.type === "image/png"
-      ? "image/png"
-      : file.type === "image/webp"
-        ? "image/webp"
-        : "image/jpeg";
-
-  // Step 1: POST presign (JWT required) → uploadUrl Lambda
-  const signRes = await fetch(`${API}/photos/upload-url`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ contentType }),
-  });
-  if (!signRes.ok) throw new Error(await signRes.text());
-  const { photoId, s3Key, uploadUrl } = await signRes.json();
-
-  // Step 2: PUT to S3 (no JWT — presigned URL is the credential)
-  const putRes = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": contentType },
-    body: file,
-  });
-  if (!putRes.ok) throw new Error(await putRes.text());
-
-  // Step 3: POST metadata (JWT required) → create Lambda sets ownerId from sub
-  const metaRes = await fetch(`${API}/photos`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ photoId, s3Key, caption }),
-  });
-  if (!metaRes.ok) throw new Error(await metaRes.text());
-}
-
-export async function listMyPhotos() {
-  const headers = await authHeaders();
-  const res = await fetch(`${API}/photos`, { headers });
-  if (!res.ok) throw new Error(await res.text());
-  const { items } = await res.json();
-  return items;
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  if (json) headers["Content-Type"] = "application/json";
+  return headers;
 }
 ```
 
-#### Minimal sign-in UI
+#### Upload with JWT
 
-```tsx
-import { useState } from "react";
-import { signInUser, uploadPhoto, listMyPhotos } from "../lib/uploadPhoto";
+`packages/client/src/api/photos.ts` implements the three-step flow (`requestUploadUrl` → `PUT` S3 → `createPhoto`) using `authHeaders` and `apiFetch`. UI wiring lives in `PhotoUpload.tsx`, `PhotoGallery.tsx`, and TanStack Query hooks under `packages/client/src/hooks/`.
 
-export function App() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loggedIn, setLoggedIn] = useState(false);
-
-  async function handleSignIn(e: React.FormEvent) {
-    e.preventDefault();
-    await signInUser(email, password);
-    setLoggedIn(true);
-  }
-
-  // … file input + uploadPhoto(file, caption) when loggedIn
-  // … listMyPhotos() for gallery
-}
-```
-
-Call `import "./amplify"` once at app entry (e.g. `main.tsx`).
+Call `import "./amplify"` once at app entry (`packages/client/src/main.tsx`).
 
 #### Handler ↔ route table (authenticated)
 
@@ -1151,7 +1138,7 @@ Move the handler to TypeScript; add **esbuild** (or similar) via a Serverless pl
 
 ### 4. DynamoDB (metadata only)
 
-Define a table in `serverless.yml` (`resources`), IAM scoped to that table, env var for table name, **`POST`** to write and **`GET`** to read (a `Scan` is fine at first).
+Define a table in `packages/api/serverless.yml` (`resources`), IAM scoped to that table, env var for table name, **`POST`** to write and **`GET`** to read (a `Scan` is fine at first).
 
 **Why before S3:** learn one data service and IAM boundary without file uploads.
 
@@ -1176,7 +1163,7 @@ User pool + SPA app client; sign up / sign in; obtain **IdToken** JWTs. See [Cog
 ### 8b. Guest uploads + merge ✅
 
 - **Identity Pool** with unauthenticated identities → `identityId` for **`X-Guest-Identity-Id`**
-- **`/guest/photos*`** — same presign → S3 → metadata flow, max **2** photos (`src/handlers/guestPhotos.ts`)
+- **`/guest/photos*`** — same presign → S3 → metadata flow, max **2** photos (`packages/api/src/handlers/guestPhotos.ts`)
 - **`POST /photos/merge`** — after sign-in, move `guests/{id}/` → `users/{sub}/` (S3 copy + DynamoDB `ownerId` update)
 - See [Guest photo upload](#guest-photo-upload-identity-pool) and [Client environment sync](#client-environment-sync)
 
@@ -1196,13 +1183,15 @@ User pool + SPA app client; sign up / sign in; obtain **IdToken** JWTs. See [Cog
 
 ## Hygiene on shared accounts
 
-Use **`npx serverless remove`** when an experiment is done so you do not leave Lambdas, APIs, and roles running in a shared or non-production AWS account (unless that account is a long-lived sandbox).
+Use **`yarn remove`** (or `yarn remove:safe` to back up `packages/client/.env` first) when an experiment is done so you do not leave Lambdas, APIs, and roles running in a shared or non-production AWS account (unless that account is a long-lived sandbox).
 
 ---
 
 ## Stack reference
 
-Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `serverless.yml` and `src/` as they exist today, plus what the [learning path](#learning-path-recommended-order) adds later.
+Deeper notes on **AWS** and how this repo’s stack fits together. Tied to `packages/api/serverless.yml` and `packages/api/src/` as they exist today, plus what the [learning path](#learning-path-recommended-order) adds later.
+
+Unless a path is shown explicitly, **`serverless.yml`** means **`packages/api/serverless.yml`** (handler paths like `src/handlers/hello.hello` are relative to that directory).
 
 ### AWS services in this project
 
@@ -1210,13 +1199,13 @@ Quick definitions of every AWS service this repo uses (and a few related ones me
 
 | Service                                            | What it is                                                                       | Role in photostore-learn                                                            |
 | -------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| **[Lambda](#what-is-lambda)**                      | Run code without managing servers; pay per invocation and duration.              | Runs `hello`, photo handlers, guest handlers, `merge` — TypeScript in `src/`.       |
+| **[Lambda](#what-is-lambda)**                      | Run code without managing servers; pay per invocation and duration.              | Runs `hello`, photo handlers, guest handlers, `merge` — TypeScript in `packages/api/src/`. |
 | **[API Gateway (HTTP API)](#what-is-api-gateway)** | Managed HTTPS front door: routes, TLS, throttling, optional auth.                | Public URL for `/hello` and `/photos*`; JWT authorizer on protected routes.         |
 | **[DynamoDB](#what-is-dynamodb)**                  | Managed NoSQL database; key–value / document rows; millisecond latency at scale. | Stores photo **metadata** (`photoId`, `ownerId`, `s3Key`, `caption`).               |
 | **[S3](#what-is-s3)**                              | Object storage for files (images, backups, static sites).                        | Stores **image bytes**; private bucket; browser uploads via presigned PUT.          |
 | **[Amazon Cognito](#what-is-amazon-cognito)**      | User Pools (sign-in, JWT) + Identity Pools (guest `identityId`).                   | `sub` → `ownerId`; guest `identityId` → `guest#…`; sign-in is client ↔ Cognito only. |
 | **[IAM](#what-is-iam)**                            | Permissions: who can call which AWS API actions on which resources.              | Your deploy user + **Lambda execution role** (`s3:PutObject`, `dynamodb:Query`, …). |
-| **[CloudFormation](#what-is-cloudformation)**      | Infrastructure as code; stacks create/update/delete AWS resources as a unit.     | `serverless deploy` creates/updates the stack from `serverless.yml`.                |
+| **[CloudFormation](#what-is-cloudformation)**      | Infrastructure as code; stacks create/update/delete AWS resources as a unit.     | `yarn deploy` creates/updates the stack from `packages/api/serverless.yml`.       |
 | **[CloudWatch Logs](#what-is-cloudwatch)**         | Log storage and search for Lambda and other services.                            | Debug `console.log` / errors after deploy (`/aws/lambda/...`).                      |
 | **CloudFront** _(step 9)_                          | CDN: cache content at edge locations closer to users.                            | Optional faster image **viewing**; not deployed in core steps.                      |
 
@@ -1278,7 +1267,7 @@ Caps change; always confirm in the [AWS Free Tier](https://aws.amazon.com/free/)
 **Cost control habits**
 
 - Deploy to **one region** (`us-east-1` in this repo) while learning.
-- Run **`npx serverless remove`** when you finish a session so Lambda, API Gateway, and IAM roles from this service are torn down.
+- Run **`yarn remove`** when you finish a session so Lambda, API Gateway, and IAM roles from this service are torn down.
 - Set a **billing budget + email alert** in the AWS console (Billing → Budgets).
 
 ### IAM & deploy permissions
@@ -1327,25 +1316,28 @@ Separate from your login. When you add DynamoDB/S3 in `serverless.yml`, you gran
 
 **This repo**
 
-- `frameworkVersion: "3"` and `serverless` in `devDependencies` → use **`npx serverless deploy`**, not bare `serverless` from PATH.
-- **`npm run print`** expands `serverless.yml` to the final CloudFormation-oriented config (good sanity check before deploy).
+- `frameworkVersion: "3"` and `serverless` in `packages/api/package.json` → use **`yarn deploy`** from the repo root (or `yarn exec serverless deploy` inside `packages/api`), not bare `serverless` from PATH.
+- **`yarn print`** expands `packages/api/serverless.yml` to the final CloudFormation-oriented config (good sanity check before deploy).
 
 **v3 vs global v4**
 
-|                         | Project-local v3 (`npx serverless`) | Global v4 (`serverless` on PATH) |
+|                         | Project-local v3 (`yarn deploy` / `packages/api`) | Global v4 (`serverless` on PATH) |
 | ----------------------- | ----------------------------------- | -------------------------------- |
 | Login to Serverless.com | Not required for `print` / deploy   | Often required                   |
 | Config in this repo     | `frameworkVersion: "3"`             | Ignored if you run global CLI    |
 
 **Key files**
 
-| File             | Role                                                                |
-| ---------------- | ------------------------------------------------------------------- |
-| `serverless.yml` | Service name, region, functions, events, `resources` (DynamoDB, S3, Cognito) |
-| `scripts/`       | `sync-client-env.sh`, `backup-client-env.sh` — client `VITE_*` after deploy |
-| `docs/`          | `env-configuration.md` — deploy/remove vs local `.env`              |
-| `src/`           | TypeScript handlers (`hello.ts`, `photos.ts`, `guestPhotos.ts`, …) |
-| `.serverless/`   | Generated artifacts after deploy (gitignored)                       |
+| Path | Role |
+| ---- | ---- |
+| `package.json` (root) | Workspace scripts: `deploy`, `dev`, `env:sync`, `format`, … |
+| `packages/api/serverless.yml` | Service name, region, functions, events, `resources` (DynamoDB, S3, Cognito) |
+| `packages/api/src/` | Lambda handlers, `lib/`, `clients/`, `schemas/` |
+| `packages/api/scripts/` | `sync-client-env.sh`, `backup-client-env.sh` → `packages/client/.env` |
+| `packages/api/docs/env-configuration.md` | Deploy/remove vs local `.env` |
+| `packages/client/src/` | React app, Amplify, API fetch layer |
+| `packages/client/.env` | `VITE_*` from `yarn env:sync` (gitignored) |
+| `packages/api/.serverless/` | Generated artifacts after deploy (gitignored) |
 
 ### Deploy, CloudFormation & cleanup
 
@@ -1356,11 +1348,11 @@ Separate from your login. When you add DynamoDB/S3 in `serverless.yml`, you gran
 | Term         | Meaning                                                            |
 | ------------ | ------------------------------------------------------------------ |
 | **Stack**    | Named set of resources for this app (e.g. `photostore-learn-dev`). |
-| **Template** | Desired state — Serverless generates it from `serverless.yml`.     |
+| **Template** | Desired state — Serverless generates it from `packages/api/serverless.yml`. |
 | **`deploy`** | Create or update the stack to match the template.                  |
 | **`remove`** | Delete the stack and (usually) all resources it owns.              |
 
-You rarely author raw CloudFormation by hand here; **Serverless Framework** compiles `serverless.yml` into a CloudFormation template and submits it.
+You rarely author raw CloudFormation by hand here; **Serverless Framework** compiles `packages/api/serverless.yml` into a CloudFormation template and submits it.
 
 #### What is Lambda?
 
@@ -1370,15 +1362,15 @@ You rarely author raw CloudFormation by hand here; **Serverless Framework** comp
 | -------------------- | ------------------------------------------------------------------------------------------------------ |
 | **Function**         | One handler export (`hello`, `uploadUrl`, `create`, `list`) per `functions.*` key in `serverless.yml`. |
 | **Trigger**          | HTTP API invokes the function when a route matches.                                                    |
-| **Package**          | esbuild bundles `src/` into a zip uploaded on deploy.                                                  |
+| **Package**          | esbuild bundles `packages/api/src/` into a zip uploaded on deploy.                                       |
 | **Runtime**          | `nodejs20.x` — Node 20.                                                                                |
 | **Timeout / memory** | Defaults from Serverless; billable per ms of execution.                                                |
 
 Lambda is **stateless** between invocations (do not rely on in-memory globals for durable data — use DynamoDB/S3).
 
-**What happens on `npx serverless deploy`**
+**What happens on `yarn deploy`**
 
-1. Serverless bundles `src/` with esbuild (see `serverless-esbuild` plugin).
+1. Serverless bundles `packages/api/src/` with esbuild (see `serverless-esbuild` plugin in `packages/api`).
 2. Uploads the zip to an S3 bucket AWS uses for deployments (managed by the framework).
 3. Creates or updates a **CloudFormation stack** named like `photostore-learn-dev`.
 4. CloudFormation creates/updates resources defined by the framework: **Lambda**, **IAM role**, **CloudWatch log groups**, **HTTP API**, **DynamoDB table**, **S3 bucket**, and route → Lambda integrations.
@@ -1396,7 +1388,7 @@ Defined in config by `service: photostore-learn`, default `stage: dev`, and `fun
 
 A line like `hello: photostore-learn-dev-hello (156 kB)` means: function key `hello`, AWS name `photostore-learn-dev-hello`, zip size `156 kB`. You should also see an **HTTP API endpoint** URL for `GET /hello`.
 
-**`npx serverless remove`**
+**`yarn remove`**
 
 - Deletes the **CloudFormation stack** and resources it owns (this service’s Lambda, API, role, etc.).
 - Does **not** delete your laptop repo or uncommitted edits.
@@ -1407,7 +1399,7 @@ A line like `hello: photostore-learn-dev-hello (156 kB)` means: function key `he
 
 | Location | `remove` effect              | `deploy` effect                                    |
 | -------- | ---------------------------- | -------------------------------------------------- |
-| AWS      | Stack gone until next deploy | Publishes current `src/` / `serverless.yml`        |
+| AWS      | Stack gone until next deploy | Publishes current `packages/api/src/` and `serverless.yml` |
 | Your Mac | No change to files           | No change to files until you edit and deploy again |
 
 ### API Gateway & HTTP
@@ -1440,7 +1432,7 @@ provider:
         - X-Guest-Identity-Id
 functions:
   hello:
-    handler: src/handlers/hello.hello
+    handler: packages/api/src/handlers/hello.hello
     events:
       - httpApi:
           path: /hello
@@ -1456,7 +1448,7 @@ Client (curl, browser, app)
   → HTTPS GET https://<api-id>.execute-api.us-east-1.amazonaws.com/hello
   → API Gateway HTTP API (TLS termination, route match)
   → Lambda Invoke (photostore-learn-dev-hello)
-  → src/handlers/hello.hello(event) runs in Node 20
+  → packages/api/src/handlers/hello.hello(event) runs in Node 20
   → returns { statusCode, headers, body }
   → API Gateway maps that to HTTP response
   → Client receives JSON
@@ -1474,7 +1466,7 @@ Lambda does not write to the socket directly. It must return:
 }
 ```
 
-`src/handlers/hello.ts` also echoes parts of `event` so you can see what API Gateway passed in.
+`packages/api/src/handlers/hello.ts` also echoes parts of `event` so you can see what API Gateway passed in.
 
 **HTTP API event (payload format 2.0)—fields used in this repo**
 
@@ -1493,7 +1485,7 @@ Other common fields: `headers`, `body`, `pathParameters`, `cookies`, `requestCon
 
 - Shape: `https://<api-id>.execute-api.<region>.amazonaws.com/<path>`
 - `<api-id>` is assigned by AWS (e.g. `hmffn49117`); it is not in source code.
-- Find it: deploy output, `npx serverless info`, or **API Gateway → APIs → Routes → Invoke URL**.
+- Find it: deploy output, `yarn workspace @photostore/api exec serverless info`, or **API Gateway → APIs → Routes → Invoke URL**.
 - Example: `curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello?foo=bar"`
 
 **HTTP API vs REST API (why it matters)**
@@ -1545,7 +1537,7 @@ iam:
 | `PHOTOS_TABLE`     | Environment variable injected into **every** function in this service (`hello`, `createPhoto`, `listPhotos`).                            |
 | `!Ref PhotosTable` | CloudFormation intrinsic: resolves to the **table name** string (e.g. `photostore-learn-dev-photos` from `TableName` under `resources`). |
 
-In code, `src/clients/dynamo.ts` reads it:
+In code, `packages/api/src/clients/dynamo.ts` reads it:
 
 ```ts
 process.env.PHOTOS_TABLE; // → "photostore-learn-dev-photos"
@@ -1595,14 +1587,14 @@ If IAM were too broad (e.g. `dynamodb:*` on `*`), a bug or compromise in Lambda 
 - **PK:** `photoId` (string)
 - **GSI `byOwner`:** `ownerId` (HASH) + `createdAt` (RANGE) — list “my photos” via `Query`
 
-Items in `src/handlers/photos.ts`: `photoId`, `ownerId`, `s3Key`, `caption`, `createdAt`.
+Items in `packages/api/src/handlers/photos.ts`: `photoId`, `ownerId`, `s3Key`, `caption`, `createdAt`.
 
 ### AWS SDK commands (`QueryCommand`, `PutCommand`, `PutObjectCommand`, …)
 
 This repo uses **AWS SDK for JavaScript v3**. Each AWS API call is a **Command** object passed to a shared client’s `.send()` method—not a method like `dynamodb.query()` on the client itself.
 
 ```ts
-// DynamoDB — src/clients/dynamo.ts exports docClient
+// DynamoDB — packages/api/src/clients/dynamo.ts exports docClient
 const result = await docClient.send(
   new QueryCommand({
     TableName: photosTableName(),
@@ -1612,7 +1604,7 @@ const result = await docClient.send(
   }),
 );
 
-// S3 — src/clients/s3.ts exports s3Client
+// S3 — packages/api/src/clients/s3.ts exports s3Client
 await s3Client.send(
   new CopyObjectCommand({
     Bucket: bucket,
@@ -1627,7 +1619,7 @@ await s3Client.send(
 | `docClient` | `@aws-sdk/lib-dynamodb`      | DynamoDB with plain JS objects (not low-level `AttributeValue` maps) |
 | `s3Client`  | `@aws-sdk/client-s3`         | S3 object upload, download, copy, delete                             |
 
-Command classes are imported from those packages in `src/handlers/photos.ts` and `src/handlers/guestPhotos.ts`. Module-level notes also live in `src/clients/dynamo.ts` and `src/clients/s3.ts`.
+Command classes are imported from those packages in `packages/api/src/handlers/photos.ts` and `packages/api/src/handlers/guestPhotos.ts`. Module-level notes also live in `packages/api/src/clients/dynamo.ts` and `packages/api/src/clients/s3.ts`.
 
 #### DynamoDB commands (`docClient.send`)
 
@@ -1712,7 +1704,7 @@ See also [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml) (IAM `Query` / `Pu
 | Piece               | Meaning                                                                |
 | ------------------- | ---------------------------------------------------------------------- |
 | `PHOTOS_BUCKET`     | Injected into Lambdas; `!Ref PhotosBucket` resolves to the bucket name |
-| `src/clients/s3.ts` | `photosBucketName()` reads `process.env.PHOTOS_BUCKET`                 |
+| `packages/api/src/clients/s3.ts` | `photosBucketName()` reads `process.env.PHOTOS_BUCKET`                 |
 
 **IAM (Lambda execution role)**
 
@@ -1808,7 +1800,7 @@ https://<bucket>.s3.<region>.amazonaws.com/photos/<photoId>.jpg
 | Piece                 | Meaning                                                                                                       |
 | --------------------- | ------------------------------------------------------------------------------------------------------------- |
 | Path                  | Exact **object key** (`photos/{photoId}.jpg`) — client cannot change key without invalidating the signature   |
-| `X-Amz-Expires`       | Lifetime in seconds (this repo: **300** = 5 minutes, see `UPLOAD_URL_EXPIRES_SECONDS` in `src/clients/s3.ts`) |
+| `X-Amz-Expires`       | Lifetime in seconds (this repo: **300** = 5 minutes, see `UPLOAD_URL_EXPIRES_SECONDS` in `packages/api/src/clients/s3.ts`) |
 | `X-Amz-SignedHeaders` | Headers that must match on the real `PUT` (here: **`host`** and **`content-type`**)                           |
 | `X-Amz-Signature`     | Cryptographic proof that something with `s3:PutObject` on this object created the URL                         |
 
@@ -1816,7 +1808,7 @@ If the client changes the key, uses `POST` instead of `PUT`, sends the wrong `Co
 
 #### What this repo signs (code)
 
-In `src/handlers/photos.ts`, `uploadUrl` builds a **`PutObject`** command and passes it to the presigner:
+In `packages/api/src/handlers/photos.ts`, `uploadUrl` builds a **`PutObject`** command and passes it to the presigner:
 
 ```ts
 await getSignedUrl(
@@ -1894,7 +1886,7 @@ Object is not world-readable. **`GET /photos`** returns a presigned **`imageUrl`
 
 ### Viewing photos (presigned GET)
 
-The bucket stays **private**—you cannot paste `s3Key` into a browser and load the image. Instead, **`GET /photos`** (handler `list` in `src/handlers/photos.ts`) queries DynamoDB, then calls **`getSignedUrl`** with **`GetObjectCommand`** once per row. The client never needs AWS credentials to download; the URL **is** the credential for that object until it expires.
+The bucket stays **private**—you cannot paste `s3Key` into a browser and load the image. Instead, **`GET /photos`** (handler `list` in `packages/api/src/handlers/photos.ts`) queries DynamoDB, then calls **`getSignedUrl`** with **`GetObjectCommand`** once per row. The client never needs AWS credentials to download; the URL **is** the credential for that object until it expires.
 
 #### Example response
 
@@ -1918,7 +1910,7 @@ The bucket stays **private**—you cannot paste `s3Key` into a browser and load 
 | -------------------------- | -------------------------------------------------------------------------- |
 | `s3Key`                    | Stable storage path (keep in DB; do not treat as a public URL)             |
 | `imageUrl`                 | Time-limited HTTPS GET link — use in `<img src>` or `fetch`                |
-| `imageUrlExpiresInSeconds` | TTL (**3600** = 1 hour, `VIEW_URL_EXPIRES_SECONDS` in `src/clients/s3.ts`) |
+| `imageUrlExpiresInSeconds` | TTL (**3600** = 1 hour, `VIEW_URL_EXPIRES_SECONDS` in `packages/api/src/clients/s3.ts`) |
 
 When URLs expire, call **`GET /photos` again** to mint fresh ones (or add a dedicated `GET /photos/{id}/view-url` later).
 
@@ -1983,10 +1975,10 @@ After deploy, Lambda writes to a log group shaped like:
 2. **Terminal (tail):**
 
 ```bash
-npx serverless logs -f hello -t
+yarn workspace @photostore/api exec serverless logs -f hello -t
 ```
 
-(`-t` follows new lines; requires a prior `npx serverless deploy`.)
+(`-t` follows new lines; requires a prior `yarn deploy`.)
 
 3. **AWS CLI:**
 
@@ -1996,17 +1988,17 @@ aws logs tail "/aws/lambda/photostore-learn-dev-hello" --follow
 
 **Debugging workflow**
 
-1. Deploy (`npx serverless deploy`).
+1. Deploy (`yarn deploy`).
 2. Hit the endpoint (browser, Postman, or `curl` using the HTTP API URL from deploy output).
-3. Open the Lambda log group or run `npx serverless logs -f hello -t`.
+3. Open the Lambda log group or run `yarn workspace @photostore/api exec serverless logs -f hello -t`.
 4. Check:
    - **No log line** → wrong URL/stage, or deploy did not update the function you think it did.
-   - **Error stack / `Task timed out`** → exception or timeout in `src/handlers/hello.ts`.
+   - **Error stack / `Task timed out`** → exception or timeout in `packages/api/src/handlers/hello.ts`.
    - **Your `console.log` output** → path, query string, custom fields you added.
 
 **Add logging in the handler**
 
-Anything you log from `src/handlers/hello.ts` appears in CloudWatch. Example:
+Anything you log from `packages/api/src/handlers/hello.ts` appears in CloudWatch. Example:
 
 ```ts
 console.log("hello request", {
@@ -2031,7 +2023,7 @@ fields @timestamp, @message
 
 **Tips**
 
-- **Source maps:** `custom.esbuild.sourcemap: true` in `serverless.yml` helps stack traces map back to TypeScript.
+- **Source maps:** `custom.esbuild.sourcemap: true` in `packages/api/serverless.yml` helps stack traces map back to TypeScript.
 - **Structured logs:** `console.log(JSON.stringify({ level: "info", ... }))` makes Insights filters easier than plain strings.
 - **Local vs deployed:** fix syntax and small bugs locally first; use CloudWatch for behavior that only appears in AWS (IAM, env vars, real API Gateway events).
 
@@ -2049,7 +2041,7 @@ Two URLs share an origin when **scheme + host + port** all match:
 
 **Why explicit CORS headers**
 
-Browser JavaScript from another origin (e.g. the React app on `localhost:5173`) cannot read API responses unless the API returns CORS headers. This repo allows **`Authorization`** (JWT) and **`X-Guest-Identity-Id`** (guest routes) on preflight and real requests — see `provider.httpApi.cors` in `serverless.yml`.
+Browser JavaScript from another origin (e.g. the React app on `localhost:5173` via `yarn dev`) cannot read API responses unless the API returns CORS headers. This repo allows **`Authorization`** (JWT) and **`X-Guest-Identity-Id`** (guest routes) on preflight and real requests — see `provider.httpApi.cors` in `packages/api/serverless.yml`.
 
 **Typical sequences**
 

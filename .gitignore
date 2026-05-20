@@ -8,3 +8,16 @@ node_modules
 .deploy/
 *.log
 .vscode/settings.json
+
+# Yarn
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.pnp.*
+
+# Client build output
+packages/client/dist
+packages/client/dist-ssr

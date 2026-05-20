@@ -5,7 +5,7 @@
 | Layer | Where it lives | Survives `deploy`? | Survives `remove`? |
 |-------|----------------|--------------------|--------------------|
 | **Backend (Lambda)** | `serverless.yml` → `provider.environment` | Yes (updated in place) | No — stack deleted |
-| **Frontend (Vite)** | `photostoreclient/.env` | Yes (local file) | Yes (file remains, values stale) |
+| **Frontend (Vite)** | `packages/client/.env` | Yes (local file) | Yes (file remains, values stale) |
 
 The backend does **not** read a `.env` file at runtime. CloudFormation sets Lambda variables (`PHOTOS_TABLE`, `PHOTOS_BUCKET`, etc.) from resources in the same stack.
 
@@ -14,11 +14,11 @@ The client needs **deploy outputs** (`HttpApiUrl`, `UserPoolId`, `IdentityPoolId
 ## After deploy — sync client `.env`
 
 ```bash
-cd photostore
-npx serverless deploy          # or: npm run deploy
-npm run env:sync               # writes ../photostoreclient/.env
+yarn install
+yarn deploy                    # from repo root
+yarn env:sync                  # writes packages/client/.env
 # one step:
-npm run deploy:sync
+yarn deploy:sync
 ```
 
 This also saves a snapshot: `.deploy/outputs-dev.json` (gitignored).
@@ -30,11 +30,11 @@ Requires: AWS CLI, `jq`, and credentials for the account/region.
 `serverless remove` deletes Cognito, API Gateway, S3 bucket, DynamoDB table, etc. Your local `.env` still points at deleted resources.
 
 ```bash
-npm run env:backup             # → .deploy/env-backups/client-env-<timestamp>.env
-npm run remove:safe            # backup + remove
+yarn env:backup                # → .deploy/env-backups/client-env-<timestamp>.env
+yarn remove:safe               # backup + remove
 ```
 
-After a **fresh** deploy, run `npm run env:sync` again and restart the Vite dev server.
+After a **fresh** deploy, run `yarn env:sync` again and restart the Vite dev server.
 
 ## What you cannot retain across `remove`
 

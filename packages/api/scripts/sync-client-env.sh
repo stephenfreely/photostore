@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Write photostoreclient/.env from CloudFormation stack outputs (after deploy).
+# Write packages/client/.env from CloudFormation stack outputs (after deploy).
 # Usage: ./scripts/sync-client-env.sh [stage] [client-env-path]
 
 set -euo pipefail
@@ -8,7 +8,7 @@ STAGE="${1:-dev}"
 SERVICE="photostore-learn"
 STACK="${SERVICE}-${STAGE}"
 REGION="${AWS_REGION:-us-east-1}"
-CLIENT_ENV="${2:-../photostoreclient/.env}"
+CLIENT_ENV="${2:-$(cd "$(dirname "$0")/../.." && pwd)/client/.env}"
 SNAPSHOT_DIR="$(cd "$(dirname "$0")/.." && pwd)/.deploy"
 
 mkdir -p "$SNAPSHOT_DIR"

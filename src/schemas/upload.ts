@@ -23,4 +23,5 @@ export const uploadUrlBodySchema = z.object({
     .default("image/jpeg"),
 });
 
+/** Output of {@link uploadUrlBodySchema} after validation (includes default `contentType`). */
 export type UploadUrlBody = z.output<typeof uploadUrlBodySchema>;

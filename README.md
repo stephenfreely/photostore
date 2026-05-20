@@ -289,15 +289,15 @@ sequenceDiagram
   React->>Cognito: fetchAuthSession()
   Cognito-->>React: identityId
 
-  React->>API: POST /guest/photos/upload-url<br/>X-Guest-Identity-Id
-  API->>API: Check count &lt; 2, presign PutObject
+  React->>API: POST /guest/photos/upload-url, X-Guest-Identity-Id
+  API->>API: Check count less than 2, presign PutObject
   API-->>React: photoId, s3Key, uploadUrl
 
   React->>S3: PUT uploadUrl
   S3-->>React: 200
 
-  React->>API: POST /guest/photos<br/>X-Guest-Identity-Id
-  API->>DDB: PutItem ownerId=guest#identityId
+  React->>API: POST /guest/photos, X-Guest-Identity-Id
+  API->>DDB: PutItem ownerId guest plus identityId
   API-->>React: 201
 ```
 
@@ -305,7 +305,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TB
-  subgraph guest [Guest path - no JWT]
+  subgraph guestPath [Guest path - no JWT]
     G1[fetchAuthSession identityId]
     G2[POST /guest/photos/upload-url]
     G3[PUT S3 guests/...]
@@ -313,7 +313,7 @@ flowchart TB
     G1 --> G2 --> G3 --> G4
   end
 
-  subgraph auth [Signed-in path - JWT]
+  subgraph authPath [Signed-in path - JWT]
     A1[signIn IdToken]
     A2[POST /photos/upload-url Bearer]
     A3[PUT S3 users/sub/...]
@@ -321,15 +321,15 @@ flowchart TB
     A1 --> A2 --> A3 --> A4
   end
 
-  subgraph merge [After sign-in]
-    M1[POST /photos/merge Bearer<br/>guestIdentityId]
-    M2[Copy S3 guests → users/sub]
+  subgraph mergePath [After sign-in]
+    M1["POST /photos/merge Bearer + guestIdentityId"]
+    M2["Copy S3 guests to users/sub"]
     M3[Update DynamoDB ownerId]
     M1 --> M2 --> M3
   end
 
-  guest --> merge
-  auth --> merge
+  guestPath --> mergePath
+  authPath --> mergePath
 ```
 
 ### Merge guest photos after sign-in
@@ -428,10 +428,10 @@ sequenceDiagram
   participant DDB as DynamoDB
 
   Note over React: User was guest; now has IdToken
-  React->>API: POST /photos/merge<br/>Bearer + guestIdentityId
-  API->>DDB: Query ownerId=guest#id
+  React->>API: POST /photos/merge Bearer and guestIdentityId
+  API->>DDB: Query ownerId guest prefix
   loop each guest photo
-    API->>S3: CopyObject guests/... → users/sub/...
+    API->>S3: CopyObject guests to users/sub
     API->>DDB: DeleteItem + PutItem ownerId=sub
     API->>S3: DeleteObject old key
   end
@@ -463,17 +463,17 @@ sequenceDiagram
   participant DDB as DynamoDB
 
   User->>React: Pick file + caption, Submit
-  React->>API: POST /photos/upload-url<br/>{ contentType }
+  React->>API: POST /photos/upload-url with contentType
   API->>API: getSignedUrl(PutObject)
-  API-->>React: { photoId, s3Key, uploadUrl }
+  API-->>React: photoId, s3Key, uploadUrl
 
-  React->>S3: PUT uploadUrl<br/>body = file bytes<br/>Content-Type matches
+  React->>S3: PUT uploadUrl with file bytes and Content-Type
   S3-->>React: 200 OK
 
-  React->>API: POST /photos<br/>{ photoId, s3Key, caption }
+  React->>API: POST /photos with photoId, s3Key, caption
   API->>DDB: PutItem
   DDB-->>API: OK
-  API-->>React: 201 { photo }
+  API-->>React: 201 photo created
   React-->>User: Success
 
   Note over React,API: See Authenticated React flow for Bearer IdToken
@@ -494,11 +494,11 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-  subgraph client [Browser / React]
+  subgraph browser [Browser / React]
     UI[PhotoUpload form]
   end
 
-  subgraph api [Your stack]
+  subgraph stack [Your stack]
     GW[HTTP API]
     L1[uploadPhotoUrl Lambda]
     L2[createPhoto Lambda]
@@ -660,21 +660,21 @@ Think of Cognito as **two layers**: a directory of users, and an **app registrat
 
 ```mermaid
 flowchart TB
-  subgraph pool [Cognito User Pool — CognitoUserPool]
+  subgraph userPool [Cognito User Pool]
     U1[User: you@example.com]
     U2[User: other@example.com]
     PWD[Passwords / sign-up rules]
     JWT[Issues JWTs after sign-in]
   end
 
-  subgraph client [User Pool Client — CognitoUserPoolClient]
+  subgraph poolClient [User Pool Client]
     SPA[Your React SPA]
     FLOWS[Allowed auth flows]
   end
 
-  SPA -->|signUp / signIn| client
-  client --> pool
-  pool -->|IdToken JWT| SPA
+  SPA -->|signUp / signIn| poolClient
+  poolClient --> userPool
+  userPool -->|IdToken JWT| SPA
   SPA -->|Authorization Bearer IdToken| API[HTTP API + JWT authorizer]
 ```
 
@@ -859,12 +859,12 @@ sequenceDiagram
   Client->>Cognito: signIn (email + password)
   Cognito-->>Client: IdToken (JWT)
 
-  Client->>GW: POST /photos/upload-url<br/>Authorization: Bearer IdToken
+  Client->>GW: POST /photos/upload-url Authorization Bearer IdToken
   GW->>GW: Validate JWT (issuer, audience, expiry)
   alt invalid / missing token
     GW-->>Client: 401 Unauthorized
   else valid
-    GW->>Lambda: event + jwt.claims (sub, email, …)
+    GW->>Lambda: event + jwt.claims (sub, email, ...)
     Lambda-->>Client: 200 presigned URL
   end
 ```
@@ -967,17 +967,17 @@ sequenceDiagram
   Cognito-->>React: session (IdToken)
 
   User->>React: file + caption
-  React->>API: POST /photos/upload-url<br/>Bearer IdToken
+  React->>API: POST /photos/upload-url Bearer IdToken
   API-->>React: photoId, s3Key, uploadUrl
 
   React->>S3: PUT uploadUrl (file)
   S3-->>React: 200
 
-  React->>API: POST /photos<br/>Bearer IdToken
+  React->>API: POST /photos Bearer IdToken
   API->>DDB: PutItem ownerId=sub
   API-->>React: 201
 
-  React->>API: GET /photos<br/>Bearer IdToken
+  React->>API: GET /photos Bearer IdToken
   API->>DDB: Query byOwner=sub
   API-->>React: items[]
 ```

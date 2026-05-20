@@ -69,6 +69,15 @@ export type PhotoListItem = PhotoItem & {
   imageUrlExpiresInSeconds: number;
 };
 
+/**
+ * Build a short-lived HTTPS GET URL so the client can display a private S3 object.
+ *
+ * The bucket is not public; presigned URLs grant temporary read access without
+ * exposing AWS credentials to the browser.
+ *
+ * @param s3Key - Full object key in the photos bucket
+ * @returns Presigned URL valid for {@link VIEW_URL_EXPIRES_SECONDS} seconds
+ */
 async function presignedImageUrl(s3Key: string): Promise<string> {
   const responseContentType = contentTypeForS3Key(s3Key);
   return getSignedUrl(

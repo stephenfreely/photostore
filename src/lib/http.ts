@@ -1,3 +1,10 @@
+/**
+ * Small HTTP helpers shared by Lambda handlers.
+ *
+ * - {@link json} — build API Gateway proxy responses with JSON bodies
+ * - {@link parseJsonBody} — parse `event.body` with consistent 400 errors
+ */
+
 import type { APIGatewayProxyStructuredResultV2 } from "aws-lambda";
 
 /** Headers applied to every JSON API response from our Lambdas. */

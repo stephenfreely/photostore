@@ -1,8 +1,29 @@
 /**
  * Guest photo API — unauthenticated Cognito Identity Pool users (max 2 photos).
  *
- * Requires `X-Guest-Identity-Id` header (from Amplify `fetchAuthSession().identityId`).
- * Objects live under `guests/{identityId}/photos/` until `POST /photos/merge` after sign-in.
+ * **Who is a "guest"?**
+ * Before sign-in, Amplify can still give the browser a Cognito *Identity Pool*
+ * identity (`fetchAuthSession().identityId`). That id is not a User Pool `sub`,
+ * but it is stable per browser/device until the user signs in.
+ *
+ * **How auth works here (no JWT)**
+ * Guest routes are *not* behind the JWT authorizer. The client must send
+ * `X-Guest-Identity-Id: <identityId>` on every request. We trust that header
+ * only for scoping data — S3 keys and DynamoDB `ownerId` are namespaced under
+ * that id so one guest cannot read or claim another guest's objects.
+ *
+ * **Upload flow (same pattern as signed-in users)**
+ * 1. `POST /guest/photos/upload-url` — get `photoId`, `s3Key`, presigned PUT URL
+ * 2. Client `PUT`s bytes to S3 using `uploadUrl`
+ * 3. `POST /guest/photos` — save metadata (`photoId`, `s3Key`, `caption`) in DynamoDB
+ *
+ * **After sign-in**
+ * Objects live under `guests/{identityId}/photos/` until the client calls
+ * `POST /photos/merge` with the saved `guestIdentityId` (see `photos.ts` `merge`).
+ *
+ * **Limits**
+ * Guests may store at most {@link GUEST_PHOTO_LIMIT} photos. Handlers check
+ * the count before minting upload URLs and before `create`.
  */
 
 import { randomUUID } from "node:crypto";
@@ -35,8 +56,25 @@ import { logError, withHandlerLogging } from "../lib/log";
 import { createPhotoBodySchema, zodErrorMessage } from "../schemas/photos";
 import { uploadUrlBodySchema } from "../schemas/upload";
 
+/**
+ * Global secondary index on the photos table for listing by owner.
+ *
+ * Partition key: `ownerId` (Cognito `sub` or `guest#<identityId>`).
+ * Sort key: `createdAt` (newest-first when `ScanIndexForward: false`).
+ * Defined in `serverless.yml`.
+ */
 const BY_OWNER_INDEX = "byOwner";
 
+/**
+ * Build a short-lived HTTPS GET URL so the client can display a private S3 object.
+ *
+ * The bucket is not public; presigned URLs grant temporary read access without
+ * exposing AWS credentials to the browser. `ResponseContentType` is set when
+ * we can infer MIME type from the file extension (helps `<img>` and caching).
+ *
+ * @param s3Key - Full object key in the photos bucket (e.g. `guests/.../photos/uuid.jpg`)
+ * @returns Presigned URL valid for {@link VIEW_URL_EXPIRES_SECONDS} seconds
+ */
 async function presignedImageUrl(s3Key: string): Promise<string> {
   const responseContentType = contentTypeForS3Key(s3Key);
   return getSignedUrl(
@@ -52,6 +90,15 @@ async function presignedImageUrl(s3Key: string): Promise<string> {
   );
 }
 
+/**
+ * How many photo metadata rows this guest already has in DynamoDB.
+ *
+ * Used to enforce {@link GUEST_PHOTO_LIMIT} before upload-url and create.
+ * Uses `Select: "COUNT"` so DynamoDB returns only a number, not full items.
+ *
+ * @param identityId - Cognito Identity Pool id from `X-Guest-Identity-Id`
+ * @returns Number of photos owned by `guest#${identityId}`
+ */
 async function countGuestPhotos(identityId: string): Promise<number> {
   const result = await docClient.send(
     new QueryCommand({
@@ -67,7 +114,24 @@ async function countGuestPhotos(identityId: string): Promise<number> {
   return result.Count ?? 0;
 }
 
-/** `POST /guest/photos/upload-url` */
+/**
+ * Mint a presigned S3 PUT URL for a guest upload (`POST /guest/photos/upload-url`).
+ *
+ * **Auth:** `X-Guest-Identity-Id` header (not JWT). See {@link requireGuestIdentityId}.
+ *
+ * **Steps**
+ * 1. Validate guest header and enforce photo count &lt; {@link GUEST_PHOTO_LIMIT}
+ * 2. Parse body `{ contentType }` (e.g. `image/jpeg`)
+ * 3. Allocate `photoId` (UUID) and `s3Key` under `guests/{identityId}/photos/`
+ * 4. Return presigned PUT URL; client uploads file directly to S3
+ *
+ * **Typical client sequence**
+ * Call this → `fetch(uploadUrl, { method: 'PUT', body: file })` → `create` with same `photoId`/`s3Key`.
+ *
+ * @param event - HTTP API v2 event (guest routes have no JWT authorizer)
+ * @returns `200` with `photoId`, `s3Key`, `uploadUrl`, `expiresInSeconds`, `remainingUploads`;
+ *          `403` if limit reached; `401` if header missing/invalid
+ */
 export const uploadUrl = withHandlerLogging("guestUploadUrl", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
@@ -123,7 +187,23 @@ export const uploadUrl = withHandlerLogging("guestUploadUrl", async (
   }
 });
 
-/** `POST /guest/photos` */
+/**
+ * Save guest photo metadata after S3 upload (`POST /guest/photos`).
+ *
+ * **Auth:** `X-Guest-Identity-Id` header.
+ *
+ * **Body:** `{ photoId, s3Key, caption }` — must match ids from `uploadUrl` and
+ * the key the client actually uploaded to.
+ *
+ * **Security:** Rejects `s3Key` not under `guests/{identityId}/photos/` so a guest
+ * cannot register metadata pointing at another user's (or guest's) object.
+ *
+ * **Server-side fields:** Sets `ownerId` to `guest#<identityId>` and `createdAt` to now.
+ * Re-checks {@link GUEST_PHOTO_LIMIT} (race: two tabs could both pass upload-url).
+ *
+ * @param event - HTTP API v2 event with JSON body
+ * @returns `201` with `{ photo, remainingUploads }`; `403` if key wrong or limit hit
+ */
 export const create = withHandlerLogging("guestCreate", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
@@ -179,7 +259,21 @@ export const create = withHandlerLogging("guestCreate", async (
   });
 });
 
-/** `GET /guest/photos` */
+/**
+ * List this guest's photos with view URLs (`GET /guest/photos`).
+ *
+ * **Auth:** `X-Guest-Identity-Id` header.
+ *
+ * Queries GSI {@link BY_OWNER_INDEX} for `ownerId = guest#<identityId>`,
+ * newest first (`ScanIndexForward: false`). For each row, attaches a presigned
+ * `imageUrl` (same helper as signed-in {@link photos.list}).
+ *
+ * Response also includes `limit` and `remainingUploads` so the UI can show
+ * how many slots are left before sign-in / merge.
+ *
+ * @param event - HTTP API v2 event
+ * @returns `200` with `{ items: PhotoListItem[], limit, remainingUploads }`
+ */
 export const list = withHandlerLogging("guestList", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {

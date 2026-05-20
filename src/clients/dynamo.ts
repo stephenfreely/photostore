@@ -23,7 +23,9 @@ export const photosTableName = (): string => {
 };
 
 /**
- * Document client: works with plain JS objects instead of low-level AttributeValue maps.
- * Reused across invocations (Lambda container reuse).
+ * Document client for photo metadata (PutItem, Query, DeleteItem).
+ *
+ * Works with plain JS objects instead of low-level AttributeValue maps.
+ * Reused across invocations when Lambda reuses the execution environment.
  */
 export const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));

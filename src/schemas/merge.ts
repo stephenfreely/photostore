@@ -1,3 +1,7 @@
+/**
+ * Zod schema for `POST /photos/merge` (move guest photos to signed-in user).
+ */
+
 import { z } from "zod";
 
 /**
@@ -18,4 +22,5 @@ export const mergePhotosBodySchema = z.object({
     ),
 });
 
+/** Output of {@link mergePhotosBodySchema} after validation. */
 export type MergePhotosBody = z.output<typeof mergePhotosBodySchema>;

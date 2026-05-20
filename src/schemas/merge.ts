@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-/** Validates `POST /photos/merge` — link guest uploads to the signed-in user. */
+/**
+ * Validates `POST /photos/merge` request body.
+ *
+ * `guestIdentityId` is the Cognito Identity Pool id from the **pre-login**
+ * `fetchAuthSession().identityId` (format `region:uuid`). It must match the id
+ * used in `X-Guest-Identity-Id` during guest uploads so the handler can find
+ * rows where `ownerId = guest#{guestIdentityId}`.
+ */
 export const mergePhotosBodySchema = z.object({
   guestIdentityId: z
     .string()

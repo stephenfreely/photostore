@@ -35,6 +35,7 @@ import {
   s3KeyPrefixForOwner,
 } from "../lib/auth";
 import { json, parseJsonBody } from "../lib/http";
+import { logError, withHandlerLogging } from "../lib/log";
 import { createPhotoBodySchema, zodErrorMessage } from "../schemas/photos";
 import { mergePhotosBodySchema } from "../schemas/merge";
 import { uploadUrlBodySchema } from "../schemas/upload";
@@ -91,7 +92,7 @@ async function presignedImageUrl(s3Key: string): Promise<string> {
  * @param event - HTTP API event with Cognito JWT claims
  * @returns `200` with `photoId`, `s3Key`, `uploadUrl`, `expiresInSeconds`
  */
-export const uploadUrl = async (
+export const uploadUrl = withHandlerLogging("uploadUrl", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
   const auth = requireOwnerId(event);
@@ -131,10 +132,10 @@ export const uploadUrl = async (
       expiresInSeconds: UPLOAD_URL_EXPIRES_SECONDS,
     });
   } catch (err) {
-    console.error("getSignedUrl failed", err);
+    logError("uploadUrl", "getSignedUrl failed", err);
     return json(500, { error: "Failed to create upload URL" });
   }
-};
+});
 
 /**
  * Save photo metadata (`POST /photos`) after the file is in S3.
@@ -144,7 +145,7 @@ export const uploadUrl = async (
  * @param event - HTTP API event with Cognito JWT claims
  * @returns `201` with `{ photo }` on success
  */
-export const create = async (
+export const create = withHandlerLogging("create", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
   const auth = requireOwnerId(event);
@@ -182,12 +183,12 @@ export const create = async (
       }),
     );
   } catch (err) {
-    console.error("PutItem failed", err);
+    logError("create", "PutItem failed", err);
     return json(500, { error: "Failed to save photo metadata" });
   }
 
   return json(201, { photo: item });
-};
+});
 
 /**
  * List the authenticated user's photos (`GET /photos`).
@@ -197,7 +198,7 @@ export const create = async (
  * @param event - HTTP API event with Cognito JWT claims
  * @returns `200` with `{ items: PhotoListItem[] }` (each item includes presigned `imageUrl`)
  */
-export const list = async (
+export const list = withHandlerLogging("list", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
   const auth = requireOwnerId(event);
@@ -225,18 +226,38 @@ export const list = async (
     );
     return json(200, { items: itemsWithUrls });
   } catch (err) {
-    console.error("Query failed", err);
+    logError("list", "Query failed", err);
     return json(500, { error: "Failed to list photos" });
   }
-};
+});
 
 /**
  * Move guest photos to the signed-in user (`POST /photos/merge`).
  *
- * After Cognito sign-in, the client sends the **pre-login** Identity Pool id so
- * objects under `guests/{id}/` become `users/{sub}/photos/`.
+ * Wired in `serverless.yml` as `mergePhotos` with `cognitoJwt` authorizer.
+ *
+ * **Client contract**
+ * - Call once after `signIn` / `signUp`, not on every page load.
+ * - Save `identityId` from `fetchAuthSession()` while the user is still a guest.
+ * - Send `Authorization: Bearer <IdToken>` and body `{ guestIdentityId }`.
+ *
+ * **What changes in AWS**
+ * | Store     | Before merge              | After merge                    |
+ * | --------- | ------------------------- | ------------------------------ |
+ * | S3 key    | `guests/{id}/photos/...`  | `users/{sub}/photos/...`       |
+ * | DynamoDB  | `ownerId` = `guest#{id}`  | `ownerId` = JWT `sub`          |
+ * | `photoId` | unchanged                 | unchanged (same partition key) |
+ *
+ * **Responses**
+ * - `200` `{ mergedCount, photos }` — success (including zero guest photos)
+ * - `401` — no JWT `sub`
+ * - `400` — invalid JSON or `guestIdentityId` (see `mergePhotosBodySchema`)
+ * - `500` — query/copy/delete failure; may return partial `mergedCount`
+ *
+ * @see src/schemas/merge.ts — request body validation
+ * @see README.md — "Merge guest photos after sign-in"
  */
-export const merge = async (
+export const merge = withHandlerLogging("merge", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
   const auth = requireOwnerId(event);
@@ -269,7 +290,7 @@ export const merge = async (
     );
     guestItems = (result.Items ?? []) as PhotoItem[];
   } catch (err) {
-    console.error("merge Query failed", err);
+    logError("merge", "merge Query failed", err);
     return json(500, { error: "Failed to load guest photos" });
   }
 
@@ -322,7 +343,7 @@ export const merge = async (
 
       merged.push(updated);
     } catch (err) {
-      console.error("merge copy failed", photo.photoId, err);
+      logError("merge", `merge copy failed photoId=${photo.photoId}`, err);
       return json(500, {
         error: "Failed to merge one or more photos",
         mergedCount: merged.length,
@@ -331,4 +352,4 @@ export const merge = async (
   }
 
   return json(200, { mergedCount: merged.length, photos: merged });
-};
+});

@@ -31,6 +31,7 @@ import {
   s3KeyPrefixForGuest,
 } from "../lib/auth";
 import { json, parseJsonBody } from "../lib/http";
+import { logError, withHandlerLogging } from "../lib/log";
 import { createPhotoBodySchema, zodErrorMessage } from "../schemas/photos";
 import { uploadUrlBodySchema } from "../schemas/upload";
 
@@ -67,7 +68,7 @@ async function countGuestPhotos(identityId: string): Promise<number> {
 }
 
 /** `POST /guest/photos/upload-url` */
-export const uploadUrl = async (
+export const uploadUrl = withHandlerLogging("guestUploadUrl", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
   const auth = requireGuestIdentityId(event);
@@ -117,13 +118,13 @@ export const uploadUrl = async (
       remainingUploads: GUEST_PHOTO_LIMIT - count - 1,
     });
   } catch (err) {
-    console.error("guest getSignedUrl failed", err);
+    logError("guestUploadUrl", "getSignedUrl failed", err);
     return json(500, { error: "Failed to create upload URL" });
   }
-};
+});
 
 /** `POST /guest/photos` */
-export const create = async (
+export const create = withHandlerLogging("guestCreate", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
   const auth = requireGuestIdentityId(event);
@@ -168,7 +169,7 @@ export const create = async (
       }),
     );
   } catch (err) {
-    console.error("guest PutItem failed", err);
+    logError("guestCreate", "PutItem failed", err);
     return json(500, { error: "Failed to save photo metadata" });
   }
 
@@ -176,10 +177,10 @@ export const create = async (
     photo: item,
     remainingUploads: GUEST_PHOTO_LIMIT - count - 1,
   });
-};
+});
 
 /** `GET /guest/photos` */
-export const list = async (
+export const list = withHandlerLogging("guestList", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
   const auth = requireGuestIdentityId(event);
@@ -213,7 +214,7 @@ export const list = async (
       remainingUploads: Math.max(0, GUEST_PHOTO_LIMIT - items.length),
     });
   } catch (err) {
-    console.error("guest Query failed", err);
+    logError("guestList", "Query failed", err);
     return json(500, { error: "Failed to list guest photos" });
   }
-};
+});

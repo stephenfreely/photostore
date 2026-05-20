@@ -20,7 +20,13 @@ provider:
   name: aws
   runtime: nodejs20.x
   region: us-east-1
+  logRetentionInDays: 14
+  logs:
+    httpApi:
+      format: >-
+        {"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength"}
   httpApi:
+    metrics: true
     cors:
       allowedOrigins:
         - "*"
@@ -272,6 +278,126 @@ resources:
               ExposedHeaders:
                 - ETag
               MaxAge: 3000
+
+    Api5xxAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-api-5xx
+        AlarmDescription: HTTP API returned one or more 5xx responses in 5 minutes
+        Namespace: AWS/ApiGateway
+        MetricName: 5xx
+        Dimensions:
+          - Name: ApiId
+            Value: !Ref HttpApi
+        Statistic: Sum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    LambdaErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${sls:stage}-lambda-errors
+        AlarmDescription: One or more Lambda handlers reported errors in 5 minutes
+        ComparisonOperator: GreaterThanThreshold
+        Threshold: 0
+        EvaluationPeriods: 1
+        TreatMissingData: notBreaching
+        Metrics:
+          - Id: totalErrors
+            Expression: SUM(METRICS())
+            Label: TotalLambdaErrors
+            ReturnData: true
+          - Id: hello
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: AWS/Lambda
+                MetricName: Errors
+                Dimensions:
+                  - Name: FunctionName
+                    Value: ${self:service}-${sls:stage}-hello
+              Period: 300
+              Stat: Sum
+          - Id: createPhoto
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: AWS/Lambda
+                MetricName: Errors
+                Dimensions:
+                  - Name: FunctionName
+                    Value: ${self:service}-${sls:stage}-createPhoto
+              Period: 300
+              Stat: Sum
+          - Id: listPhotos
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: AWS/Lambda
+                MetricName: Errors
+                Dimensions:
+                  - Name: FunctionName
+                    Value: ${self:service}-${sls:stage}-listPhotos
+              Period: 300
+              Stat: Sum
+          - Id: uploadPhotoUrl
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: AWS/Lambda
+                MetricName: Errors
+                Dimensions:
+                  - Name: FunctionName
+                    Value: ${self:service}-${sls:stage}-uploadPhotoUrl
+              Period: 300
+              Stat: Sum
+          - Id: mergePhotos
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: AWS/Lambda
+                MetricName: Errors
+                Dimensions:
+                  - Name: FunctionName
+                    Value: ${self:service}-${sls:stage}-mergePhotos
+              Period: 300
+              Stat: Sum
+          - Id: guestUploadPhotoUrl
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: AWS/Lambda
+                MetricName: Errors
+                Dimensions:
+                  - Name: FunctionName
+                    Value: ${self:service}-${sls:stage}-guestUploadPhotoUrl
+              Period: 300
+              Stat: Sum
+          - Id: guestCreatePhoto
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: AWS/Lambda
+                MetricName: Errors
+                Dimensions:
+                  - Name: FunctionName
+                    Value: ${self:service}-${sls:stage}-guestCreatePhoto
+              Period: 300
+              Stat: Sum
+          - Id: guestListPhotos
+            ReturnData: false
+            MetricStat:
+              Metric:
+                Namespace: AWS/Lambda
+                MetricName: Errors
+                Dimensions:
+                  - Name: FunctionName
+                    Value: ${self:service}-${sls:stage}-guestListPhotos
+              Period: 300
+              Stat: Sum
 
   Outputs:
     # Do not define HttpApiUrl here — Serverless already outputs it for httpApi (duplicate name breaks deploy).

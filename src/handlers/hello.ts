@@ -8,6 +8,7 @@ import type {
   APIGatewayProxyEventV2,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
+import { withHandlerLogging } from "../lib/log";
 
 /**
  * Sample HTTP API handler (payload format 2.0).
@@ -18,7 +19,7 @@ import type {
  * @param event - HTTP API proxy event from API Gateway
  * @returns JSON response with `message: "ok"` and selected `event` fields
  */
-export const hello = async (
+export const hello = withHandlerLogging("hello", async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => ({
   statusCode: 200,
@@ -32,4 +33,4 @@ export const hello = async (
     method: event.requestContext?.http?.method,
     sourceIp: event.requestContext?.http?.sourceIp,
   }),
-});
+}));

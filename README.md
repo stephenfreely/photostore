@@ -1,14 +1,15 @@
 # photostore-learn
 
-AWS Serverless learning project: **Lambda**, **API Gateway (HTTP API)**, **DynamoDB**, **S3**, and **Amazon Cognito**—step by step through **step 8** (identity, JWT authorizer, per-user photos). Stretch goals (step 9) are optional.
+AWS Serverless learning project: **Lambda**, **API Gateway (HTTP API)**, **DynamoDB**, **S3**, and **Amazon Cognito**—through **step 8** (JWT auth, per-user photos), plus **guest uploads** (Identity Pool, max 2 photos before sign-in), **merge on sign-in**, and **client env sync** after deploy. Optional stretch: **CloudFront** (step 9).
 
 Each service is explained where it appears in the repo; start with [AWS services in this project](#aws-services-in-this-project) in the stack reference for a one-page glossary.
 
-## Prerequisites11
+## Prerequisites
 
 - Node.js and npm
 - AWS CLI configured (`aws sts get-caller-identity` works)
-- IAM permissions to deploy (CloudFormation, Lambda, API Gateway, etc.)
+- **`jq`** (for `npm run env:sync` — writes the React client `.env` from stack outputs)
+- IAM permissions to deploy (CloudFormation, Lambda, API Gateway, Cognito, etc.)
 
 ## Commands (use project-local Serverless v3)
 
@@ -16,11 +17,50 @@ Global `serverless` may be **v4**, which requires a Serverless.com login. This r
 
 ```bash
 npm install
-npm run print          # validate serverless.yml
-npx serverless deploy
+npm run print              # validate serverless.yml
+npm run deploy             # deploy stack
+npm run deploy:sync        # deploy + write ../photostoreclient/.env from outputs
+npm run env:sync           # sync client .env only (after deploy)
+npm run env:backup         # snapshot client .env before remove
+npm run remove:safe        # backup client .env, then serverless remove
 npx serverless invoke -f hello --log
-npx serverless remove   # delete stack / avoid stray resources on shared accounts
 ```
+
+See [Client environment sync](#client-environment-sync) and [`docs/env-configuration.md`](docs/env-configuration.md) for what survives `deploy` vs `remove`.
+
+## Client environment sync
+
+Deploy creates AWS resources; the **React client** (`../photostoreclient`) needs matching `VITE_*` variables. They are **not** read from a backend `.env` at Lambda runtime — CloudFormation injects `PHOTOS_TABLE`, `PHOTOS_BUCKET`, etc. into functions directly.
+
+| Layer              | Where                         | Survives `remove`? |
+| ------------------ | ----------------------------- | ------------------ |
+| Backend (Lambda)   | `serverless.yml` → stack      | No — stack deleted |
+| Frontend (Vite)    | `../photostoreclient/.env`    | File remains (stale ids) |
+
+```bash
+npm run deploy:sync    # deploy + write client .env
+# or separately:
+npm run deploy && npm run env:sync
+```
+
+`env:sync` reads CloudFormation outputs and writes:
+
+```env
+VITE_API_URL=...
+VITE_USER_POOL_ID=...
+VITE_USER_POOL_CLIENT_ID=...
+VITE_IDENTITY_POOL_ID=...
+VITE_AWS_REGION=us-east-1
+```
+
+A snapshot is saved to `.deploy/outputs-dev.json` (gitignored). Before tearing down the stack:
+
+```bash
+npm run env:backup      # → .deploy/env-backups/client-env-<timestamp>.env
+npm run remove:safe     # backup + serverless remove
+```
+
+After a **fresh** deploy, run `env:sync` again and restart the Vite dev server. Full notes: [`docs/env-configuration.md`](docs/env-configuration.md).
 
 After deploy, call **`GET /hello`** using the HTTP API base URL from the deploy output:
 
@@ -32,21 +72,25 @@ curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello"
 
 - **Service:** `photostore-learn` (see `serverless.yml`)
 - **Stage:** `dev` (default)
-- **Lambdas:** `hello`, `createPhoto`, `listPhotos`, `uploadPhotoUrl` (TypeScript in `src/`, bundled with esbuild)
-- **Cognito:** User Pool + SPA app client (email sign-in) — [Cognito & JWT auth](#cognito--jwt-auth-steps-68)
+- **Lambdas:** `hello`, `createPhoto`, `listPhotos`, `uploadPhotoUrl`, `mergePhotos`, `guestUploadPhotoUrl`, `guestCreatePhoto`, `guestListPhotos` (TypeScript in `src/`, bundled with esbuild)
+- **Cognito:** User Pool + SPA app client + **Identity Pool** (unauthenticated guests) — [Cognito & JWT auth](#cognito--jwt-auth-steps-68) · [Guest photos](#guest-photo-upload-identity-pool)
 - **API (HTTP API, CORS enabled):**
 
-  | Method | Path                 | Auth          | Handler              |
-  | ------ | -------------------- | ------------- | -------------------- |
-  | `GET`  | `/hello`             | public        | health / event echo  |
-  | `POST` | `/photos/upload-url` | JWT (Cognito) | presigned S3 PUT URL |
-  | `POST` | `/photos`            | JWT (Cognito) | save metadata        |
-  | `GET`  | `/photos`            | JWT (Cognito) | **my** photos only   |
+  | Method | Path                       | Auth                         | Handler                    |
+  | ------ | -------------------------- | ---------------------------- | -------------------------- |
+  | `GET`  | `/hello`                   | public                       | health / event echo        |
+  | `POST` | `/photos/upload-url`       | JWT (Cognito)                | presigned S3 PUT URL       |
+  | `POST` | `/photos`                  | JWT (Cognito)                | save metadata              |
+  | `GET`  | `/photos`                  | JWT (Cognito)                | **my** photos only         |
+  | `POST` | `/photos/merge`            | JWT (Cognito)                | move guest photos → user   |
+  | `POST` | `/guest/photos/upload-url` | `X-Guest-Identity-Id` header | guest presigned PUT (≤2)   |
+  | `POST` | `/guest/photos`            | `X-Guest-Identity-Id`        | guest save metadata        |
+  | `GET`  | `/guest/photos`            | `X-Guest-Identity-Id`        | guest list (≤2)            |
 
 - **DynamoDB:** `photostore-learn-dev-photos` — metadata only (`s3Key` points at S3) — [Storage: S3 vs DynamoDB](#storage-s3-vs-dynamodb-what-lives-where) · [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml)
-- **S3:** private bucket; image **bytes** at `users/{sub}/photos/{photoId}.jpg` — [Storage: S3 vs DynamoDB](#storage-s3-vs-dynamodb-what-lives-where) · [S3 wiring](#s3-wiring-in-serverlessyml)
+- **S3:** private bucket; signed-in objects under `users/{sub}/photos/`; guest objects under `guests/{identityId}/photos/` — [Storage: S3 vs DynamoDB](#storage-s3-vs-dynamodb-what-lives-where) · [S3 wiring](#s3-wiring-in-serverlessyml)
 
-After `npx serverless deploy`, note **Outputs**: `UserPoolId`, `UserPoolClientId`, `HttpApiUrl`, `CognitoIssuer`.
+After deploy, note **Outputs**: `UserPoolId`, `UserPoolClientId`, `IdentityPoolId`, `HttpApiUrl` (from Serverless), `CognitoIssuer`. Run **`npm run env:sync`** to write `VITE_*` values into `../photostoreclient/.env`.
 
 ### Source layout (`src/`)
 
@@ -56,9 +100,10 @@ Handlers, shared helpers, and AWS clients are separated so new routes and domain
 src/
   handlers/          # Lambda entry points (thin: parse event → respond)
     hello.ts         # GET /hello
-    photos.ts        # POST /photos/upload-url, POST /photos, GET /photos
+    photos.ts        # POST/GET /photos*, POST /photos/merge
+    guestPhotos.ts   # GET/POST /guest/photos*
   lib/               # Cross-cutting helpers (no AWS SDK)
-    auth.ts          # JWT claims → ownerId
+    auth.ts          # JWT sub → ownerId; guest identity header + prefixes
     http.ts          # JSON responses, body parsing
   clients/           # AWS SDK wrappers (reused clients, env config)
     dynamo.ts
@@ -66,6 +111,7 @@ src/
   schemas/           # Zod request validation
     photos.ts
     upload.ts
+    merge.ts         # POST /photos/merge body
 ```
 
 When you add a new domain (e.g. albums), add `handlers/albums.ts` plus any `schemas/albums.ts`. Put new AWS services under `clients/`.
@@ -172,6 +218,233 @@ uploadUrl  →  (client PUT S3)  →  create
 
 - **`uploadUrl`** — S3 presigning only; does not write DynamoDB or receive file bytes.
 - **`create`** — DynamoDB only; assumes the object already exists at `s3Key`. Skipping step 3 leaves an orphan file in S3 with no row in `GET /photos`.
+
+### Guest photo upload (Identity Pool)
+
+Visitors can upload **up to 2 photos** before creating an account. They use the same three-step pattern (presign → PUT S3 → save metadata), but **no JWT** — the client sends **`X-Guest-Identity-Id`** from Amplify’s unauthenticated Identity Pool session.
+
+#### Cognito Identity Pool (what it adds)
+
+| Piece | Role in this repo |
+| ----- | ----------------- |
+| **Identity Pool** | Issues a stable **`identityId`** (`us-east-1:uuid`) for browsers that have not signed in |
+| **Unauthenticated role** | Minimal IAM — only `cognito-identity:GetId` (guest uploads use **presigned URLs** from Lambda, not direct S3 credentials) |
+| **User Pool link** | Same pool/client as sign-in; after login, authenticated identities use the API JWT path |
+
+Configure Amplify with `identityPoolId` (from deploy output / `VITE_IDENTITY_POOL_ID`). Call `fetchAuthSession()` **before** sign-in to obtain `identityId` for the guest header.
+
+#### Guest vs signed-in storage
+
+| | DynamoDB `ownerId` | S3 key prefix |
+| - | ------------------ | ------------- |
+| **Guest** | `guest#{identityId}` | `guests/{identityId}/photos/{photoId}.{ext}` |
+| **Signed-in** | JWT `sub` | `users/{sub}/photos/{photoId}.{ext}` |
+
+Guest routes validate the header in `src/lib/auth.ts` (`GUEST_PHOTO_LIMIT = 2`). Responses include `remainingUploads` and `limit`.
+
+#### Guest API routes
+
+| Step | Route | Auth | Handler (`guestPhotos.ts`) |
+| ---- | ----- | ---- | -------------------------- |
+| 1 | `POST /guest/photos/upload-url` | `X-Guest-Identity-Id` | `uploadUrl` |
+| 2 | `PUT` presigned URL | — | Client → S3 |
+| 3 | `POST /guest/photos` | `X-Guest-Identity-Id` | `create` |
+| list | `GET /guest/photos` | `X-Guest-Identity-Id` | `list` |
+
+```bash
+# Obtain identityId from your SPA (Amplify fetchAuthSession) or AWS CLI against the Identity Pool
+GUEST_ID="us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+HDR="X-Guest-Identity-Id: $GUEST_ID"
+
+curl -s -X POST "$API/guest/photos/upload-url" \
+  -H "content-type: application/json" \
+  -H "$HDR" \
+  -d '{"contentType":"image/jpeg"}' | tee /tmp/guest-upload.json
+
+UPLOAD_URL=$(jq -r .uploadUrl /tmp/guest-upload.json)
+curl -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "$UPLOAD_URL"
+
+PHOTO_ID=$(jq -r .photoId /tmp/guest-upload.json)
+S3_KEY=$(jq -r .s3Key /tmp/guest-upload.json)
+curl -s -X POST "$API/guest/photos" \
+  -H "content-type: application/json" \
+  -H "$HDR" \
+  -d "{\"photoId\":\"$PHOTO_ID\",\"s3Key\":\"$S3_KEY\",\"caption\":\"try before signup\"}"
+
+curl -s -H "$HDR" "$API/guest/photos" | jq .
+```
+
+#### Sequence: guest upload (no JWT)
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant React as React app
+  participant Cognito as Identity Pool
+  participant API as HTTP API + Lambda
+  participant S3 as S3
+  participant DDB as DynamoDB
+
+  User->>React: Pick file (not signed in)
+  React->>Cognito: fetchAuthSession()
+  Cognito-->>React: identityId
+
+  React->>API: POST /guest/photos/upload-url<br/>X-Guest-Identity-Id
+  API->>API: Check count &lt; 2, presign PutObject
+  API-->>React: photoId, s3Key, uploadUrl
+
+  React->>S3: PUT uploadUrl
+  S3-->>React: 200
+
+  React->>API: POST /guest/photos<br/>X-Guest-Identity-Id
+  API->>DDB: PutItem ownerId=guest#identityId
+  API-->>React: 201
+```
+
+#### Flowchart: guest vs authenticated paths
+
+```mermaid
+flowchart TB
+  subgraph guest [Guest path - no JWT]
+    G1[fetchAuthSession identityId]
+    G2[POST /guest/photos/upload-url]
+    G3[PUT S3 guests/...]
+    G4[POST /guest/photos]
+    G1 --> G2 --> G3 --> G4
+  end
+
+  subgraph auth [Signed-in path - JWT]
+    A1[signIn IdToken]
+    A2[POST /photos/upload-url Bearer]
+    A3[PUT S3 users/sub/...]
+    A4[POST /photos Bearer]
+    A1 --> A2 --> A3 --> A4
+  end
+
+  subgraph merge [After sign-in]
+    M1[POST /photos/merge Bearer<br/>guestIdentityId]
+    M2[Copy S3 guests → users/sub]
+    M3[Update DynamoDB ownerId]
+    M1 --> M2 --> M3
+  end
+
+  guest --> merge
+  auth --> merge
+```
+
+### Merge guest photos after sign-in
+
+**`mergePhotos`** — Lambda `src/handlers/photos.merge`, route **`POST /photos/merge`**, JWT authorizer `cognitoJwt` in `serverless.yml`.
+
+Moves guest uploads into the signed-in user's account after Cognito login. Before sign-in, the SPA uses the Identity Pool (unauthenticated) and **`/guest/photos*`** routes. Bytes live at `guests/{identityId}/photos/` in S3 and metadata uses DynamoDB `ownerId = guest#{identityId}`. After sign-in, this endpoint re-homes those rows and objects under `users/{sub}/photos/` where `sub` is the JWT subject.
+
+#### When to call (client)
+
+- **Once** after `signUp` or `signIn` — not on every page load.
+- While still a guest, save `identityId` from `fetchAuthSession()` (e.g. `localStorage`).
+- After login, `POST /photos/merge` with that value and a valid **IdToken**.
+- Then use normal authenticated upload helpers (`/photos/upload-url`, etc.).
+
+**React tip:** persist `session.identityId` from the pre-login `fetchAuthSession()` call; after `signIn`, call merge once, then list with `GET /photos`.
+
+#### Request
+
+| Item | Value |
+| ---- | ----- |
+| Method | `POST` |
+| Path | `/photos/merge` |
+| Auth | `Authorization: Bearer <Cognito IdToken>` |
+| Headers | No `X-Guest-Identity-Id` (JWT only) |
+| Body | `{ "guestIdentityId": "us-east-1:uuid" }` — Cognito Identity Pool id (`region:uuid`); validated in `src/schemas/merge.ts` |
+
+`guestIdentityId` must be the **same** id sent as `X-Guest-Identity-Id` during guest uploads so the handler can find `ownerId = guest#{guestIdentityId}`.
+
+#### Response (`200`)
+
+```json
+{
+  "mergedCount": 2,
+  "photos": [
+    {
+      "photoId": "...",
+      "ownerId": "<JWT sub>",
+      "s3Key": "users/<sub>/photos/<filename>",
+      "caption": "...",
+      "createdAt": "..."
+    }
+  ]
+}
+```
+
+- **`mergedCount`** — number of photos moved in this call.
+- **`photos`** — updated metadata rows (same `photoId`, new `ownerId` and `s3Key`).
+- **Empty guest:** `{ "mergedCount": 0, "photos": [] }` — safe to retry if the user had nothing to merge.
+
+#### What changes in AWS
+
+| Store | Before merge | After merge |
+| ----- | ------------ | ----------- |
+| S3 key | `guests/{id}/photos/...` | `users/{sub}/photos/...` |
+| DynamoDB `ownerId` | `guest#{id}` | JWT `sub` |
+| `photoId` | unchanged | unchanged (same partition key) |
+
+#### Errors
+
+| Status | Cause |
+| ------ | ----- |
+| `401` | Missing/invalid JWT or no `sub` claim |
+| `400` | Missing body or invalid `guestIdentityId` (Zod) |
+| `500` | DynamoDB query failed, or S3 copy/delete failed mid-loop |
+
+On `500` during the per-photo loop, the response may include a **partial** `mergedCount` for photos already moved.
+
+#### Implementation (`photos.merge`)
+
+1. Query GSI **`byOwner`** where `ownerId = guest#{guestIdentityId}`.
+2. For each photo:
+   - **S3** `CopyObject` → `users/{sub}/photos/{filename}`
+   - **S3** `DeleteObject` on the old `guests/...` key
+   - **DynamoDB** `DeleteItem` + `PutItem` with new `ownerId` and `s3Key` (same `photoId`)
+
+**IAM** (shared Lambda role): `dynamodb:Query`, `PutItem`, `DeleteItem`; `s3:CopyObject`, `s3:DeleteObject` on the photos bucket.
+
+#### Try it
+
+```bash
+# After obtaining TOKEN (see Photo upload flow)
+curl -s -X POST "$API/photos/merge" \
+  -H "content-type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "{\"guestIdentityId\":\"$GUEST_ID\"}" | jq .
+
+curl -s -H "Authorization: Bearer $TOKEN" "$API/photos" | jq .
+```
+
+```mermaid
+sequenceDiagram
+  participant React
+  participant API as HTTP API + Lambda
+  participant S3
+  participant DDB as DynamoDB
+
+  Note over React: User was guest; now has IdToken
+  React->>API: POST /photos/merge<br/>Bearer + guestIdentityId
+  API->>DDB: Query ownerId=guest#id
+  loop each guest photo
+    API->>S3: CopyObject guests/... → users/sub/...
+    API->>DDB: DeleteItem + PutItem ownerId=sub
+    API->>S3: DeleteObject old key
+  end
+  API-->>React: mergedCount, photos[]
+```
+
+#### Auth comparison
+
+| Field / header | Guest routes | Signed-in routes | Merge |
+| -------------- | ------------ | ---------------- | ----- |
+| `Authorization: Bearer` | — | Required | Required |
+| `X-Guest-Identity-Id` | Required | — | — |
+| Body | upload / metadata | upload / metadata | `{ "guestIdentityId": "region:uuid" }` |
 
 ### React / Amplify client flow
 
@@ -289,7 +562,9 @@ Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `
 
 **Auth & React:** [Cognito & JWT auth](#cognito--jwt-auth-steps-68) · [Authenticated React / Amplify flow](#authenticated-react--amplify-flow)
 
-**Next lesson step:** **9. Optional stretch goals** in the [learning path](#learning-path-recommended-order) (CloudFront, Identity Pool).
+**Guest uploads:** [Guest photo upload](#guest-photo-upload-identity-pool) · **Merge after login:** [Merge guest photos](#merge-guest-photos-after-sign-in) · **Client env:** [Client environment sync](#client-environment-sync)
+
+**Next lesson step:** **9. Optional stretch goals** in the [learning path](#learning-path-recommended-order) (CloudFront).
 
 ---
 
@@ -304,7 +579,7 @@ Allowed `contentType` values: `image/jpeg`, `image/png`, `image/webp` (default `
 | **User Pool**                      | Directory of users (this repo: email + password).                                            |
 | **User Pool Client**               | Your SPA’s app id — allowed login flows; JWT **audience**.                                   |
 | **IdToken (JWT)**                  | Sent as `Authorization: Bearer …` to API Gateway; includes **`sub`** (user id).              |
-| **Identity Pool** _(not used yet)_ | Would grant temporary **AWS credentials** to the browser for direct S3 — optional in step 9. |
+| **Identity Pool** | Unauthenticated **`identityId`** for guest uploads (`X-Guest-Identity-Id`); minimal IAM on the guest role. Uploads still use **presigned URLs** from Lambda. |
 
 Sign-up and sign-in go **Client ↔ Cognito** directly. Your Lambdas only see the validated JWT claims after API Gateway’s authorizer runs.
 
@@ -428,7 +703,9 @@ Users are created with `sign-up` (CLI or Amplify). You do **not** store password
 
 **User Pool** = who users are. **User Pool Client** = which app is asking and which login methods are allowed.
 
-**Not in this repo (step 9):** **Identity Pool** — temporary **AWS access keys** for direct S3 from the browser. We use **presigned URLs** + API JWTs instead.
+**Identity Pool (implemented):** `CognitoIdentityPool` with `AllowUnauthenticatedIdentities: true`. Guests get an `identityId` for API scoping; they do **not** receive broad S3 credentials — Lambda still presigns uploads. See [Guest photo upload](#guest-photo-upload-identity-pool).
+
+**Not in this repo (optional):** browser **direct S3** access via Identity Pool credentials (we use presigned URLs instead).
 
 ### Wiring Cognito in `serverless.yml`
 
@@ -535,10 +812,39 @@ resources:
 | ------------------ | -------------------------------------------------------------------------------- |
 | `UserPoolId`       | `VITE_USER_POOL_ID` in React / Amplify                                           |
 | `UserPoolClientId` | `VITE_USER_POOL_CLIENT_ID` in React / Amplify                                    |
+| `IdentityPoolId`   | `VITE_IDENTITY_POOL_ID` — guest `fetchAuthSession().identityId`                  |
 | `CognitoIssuer`    | Must match JWT authorizer `issuerUrl` (debugging)                                |
 | `HttpApiUrl`       | From **Serverless** automatically (do not duplicate in `Outputs`) — API base URL |
 
+Use **`npm run env:sync`** to populate all `VITE_*` values in `../photostoreclient/.env` after deploy.
+
 Lambda does **not** verify JWTs itself for protected routes; API Gateway does. `src/lib/auth.ts` only reads **`sub`** from claims the authorizer already validated.
+
+#### 5. Identity Pool — guest `identityId` (no JWT on `/guest/*`)
+
+```yaml
+CognitoIdentityPool:
+  Type: AWS::Cognito::IdentityPool
+  Properties:
+    AllowUnauthenticatedIdentities: true
+    CognitoIdentityProviders:
+      - ClientId: !Ref CognitoUserPoolClient
+        ProviderName: !Sub cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}
+
+CognitoIdentityPoolRoles:
+  Type: AWS::Cognito::IdentityPoolRoleAttachment
+  Properties:
+    Roles:
+      unauthenticated: !GetAtt CognitoUnauthenticatedRole.Arn
+      authenticated: !GetAtt CognitoAuthenticatedRole.Arn
+```
+
+| Piece | Role |
+| ----- | ---- |
+| `AllowUnauthenticatedIdentities` | Browser can call `GetId` before sign-in |
+| `CognitoUnauthenticatedRole` | Minimal policy (`cognito-identity:GetId` only) |
+| Guest routes | No `authorizer` in `serverless.yml`; Lambda trusts `X-Guest-Identity-Id` + prefix checks |
+| `IdentityPoolId` output | `VITE_IDENTITY_POOL_ID` via `npm run env:sync` |
 
 ### JWT request flow
 
@@ -622,8 +928,11 @@ Env (Vite example) — values from `npx serverless deploy` **Outputs**:
 VITE_API_URL=https://<api-id>.execute-api.us-east-1.amazonaws.com
 VITE_USER_POOL_ID=us-east-1_xxxx
 VITE_USER_POOL_CLIENT_ID=xxxxxxxx
+VITE_IDENTITY_POOL_ID=us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 VITE_AWS_REGION=us-east-1
 ```
+
+Or run **`npm run env:sync`** from the repo root after deploy (writes `../photostoreclient/.env` automatically).
 
 #### Configure Amplify Auth
 
@@ -636,6 +945,7 @@ Amplify.configure({
     Cognito: {
       userPoolId: import.meta.env.VITE_USER_POOL_ID,
       userPoolClientId: import.meta.env.VITE_USER_POOL_CLIENT_ID,
+      identityPoolId: import.meta.env.VITE_IDENTITY_POOL_ID,
     },
   },
 });
@@ -782,11 +1092,32 @@ Call `import "./amplify"` once at app entry (e.g. `main.tsx`).
 | **2**    | `PUT` presigned URL       | —    | —           | S3 only                                                 |
 | **3**    | `POST /photos`            | JWT  | `create`    | Sets `ownerId` = `sub`; rejects wrong `s3Key` prefix    |
 | **list** | `GET /photos`             | JWT  | `list`      | `Query` GSI `byOwner` = `sub`; each item has `imageUrl` |
+| **merge**| `POST /photos/merge`      | JWT  | `merge`     | Moves `guest#id` rows + S3 objects to `users/{sub}/`    |
 
 ```text
 Cognito signIn → IdToken
 uploadUrl (Bearer) → PUT S3 → create (Bearer)
 list (Bearer) → only my rows
+merge (Bearer + guestIdentityId) → guest photos become mine
+```
+
+#### Guest headers helper (before sign-in)
+
+```ts
+import { fetchAuthSession } from "aws-amplify/auth";
+
+export async function guestHeaders(): Promise<HeadersInit> {
+  const session = await fetchAuthSession();
+  const identityId = session.identityId;
+  if (!identityId) throw new Error("No guest identity — check VITE_IDENTITY_POOL_ID");
+  return {
+    "Content-Type": "application/json",
+    "X-Guest-Identity-Id": identityId,
+  };
+}
+
+// Persist for merge after signIn:
+// localStorage.setItem("guestIdentityId", session.identityId);
 ```
 
 ---
@@ -837,10 +1168,17 @@ User pool + SPA app client; sign up / sign in; obtain **IdToken** JWTs. See [Cog
 
 `ownerId` from JWT **`sub`**; S3 keys `users/{sub}/photos/...`; **`GET /photos`** uses GSI **`byOwner`** (Query, not Scan).
 
+### 8b. Guest uploads + merge ✅
+
+- **Identity Pool** with unauthenticated identities → `identityId` for **`X-Guest-Identity-Id`**
+- **`/guest/photos*`** — same presign → S3 → metadata flow, max **2** photos (`src/handlers/guestPhotos.ts`)
+- **`POST /photos/merge`** — after sign-in, move `guests/{id}/` → `users/{sub}/` (S3 copy + DynamoDB `ownerId` update)
+- See [Guest photo upload](#guest-photo-upload-identity-pool) and [Client environment sync](#client-environment-sync)
+
 ### 9. Optional stretch goals ← next
 
-- **Cognito Identity Pool** + scoped **browser → S3** access
-- **CloudFront** in front of S3 for faster repeat views (presigned **GET** via `imageUrl` is already implemented on `GET /photos`)
+- **CloudFront** in front of S3 for faster repeat views (presigned **GET** via `imageUrl` is already on `GET /photos`)
+- Direct browser → S3 via Identity Pool credentials (this repo uses presigned URLs instead)
 - Better errors, least-privilege IAM, Cognito MFA / password policies
 
 ---
@@ -849,7 +1187,7 @@ User pool + SPA app client; sign up / sign in; obtain **IdToken** JWTs. See [Cog
 
 - **User Pool (`CognitoUserPool`):** who the user is (accounts + **JWTs**). See [Cognito User Pool vs Client](#cognito-user-pool-vs-user-pool-client).
 - **User Pool Client (`CognitoUserPoolClient`):** your SPA’s app id + allowed login flows; JWT **audience** for API Gateway.
-- **Identity Pool (optional, step 9):** temporary **AWS credentials** for that user (often for direct S3 from the browser)—**not** used in this repo yet.
+- **Identity Pool:** unauthenticated **`identityId`** for guest API routes; optional future use for direct S3 credentials from the browser.
 
 ## Hygiene on shared accounts
 
@@ -867,11 +1205,11 @@ Quick definitions of every AWS service this repo uses (and a few related ones me
 
 | Service                                            | What it is                                                                       | Role in photostore-learn                                                            |
 | -------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| **[Lambda](#what-is-lambda)**                      | Run code without managing servers; pay per invocation and duration.              | Runs `hello`, `uploadUrl`, `create`, `list` — your TypeScript in `src/`.            |
+| **[Lambda](#what-is-lambda)**                      | Run code without managing servers; pay per invocation and duration.              | Runs `hello`, photo handlers, guest handlers, `merge` — TypeScript in `src/`.       |
 | **[API Gateway (HTTP API)](#what-is-api-gateway)** | Managed HTTPS front door: routes, TLS, throttling, optional auth.                | Public URL for `/hello` and `/photos*`; JWT authorizer on protected routes.         |
 | **[DynamoDB](#what-is-dynamodb)**                  | Managed NoSQL database; key–value / document rows; millisecond latency at scale. | Stores photo **metadata** (`photoId`, `ownerId`, `s3Key`, `caption`).               |
 | **[S3](#what-is-s3)**                              | Object storage for files (images, backups, static sites).                        | Stores **image bytes**; private bucket; browser uploads via presigned PUT.          |
-| **[Amazon Cognito](#what-is-amazon-cognito)**      | User sign-up/sign-in and JWT tokens (User Pools).                                | Who is logged in; `sub` → `ownerId`; no Lambda for sign-in.                         |
+| **[Amazon Cognito](#what-is-amazon-cognito)**      | User Pools (sign-in, JWT) + Identity Pools (guest `identityId`).                   | `sub` → `ownerId`; guest `identityId` → `guest#…`; sign-in is client ↔ Cognito only. |
 | **[IAM](#what-is-iam)**                            | Permissions: who can call which AWS API actions on which resources.              | Your deploy user + **Lambda execution role** (`s3:PutObject`, `dynamodb:Query`, …). |
 | **[CloudFormation](#what-is-cloudformation)**      | Infrastructure as code; stacks create/update/delete AWS resources as a unit.     | `serverless deploy` creates/updates the stack from `serverless.yml`.                |
 | **[CloudWatch Logs](#what-is-cloudwatch)**         | Log storage and search for Lambda and other services.                            | Debug `console.log` / errors after deploy (`/aws/lambda/...`).                      |
@@ -879,15 +1217,19 @@ Quick definitions of every AWS service this repo uses (and a few related ones me
 
 ```text
 Browser / curl
-    → API Gateway (HTTP API)     ← HTTPS routes, JWT check
+    → API Gateway (HTTP API)     ← HTTPS routes, JWT and/or X-Guest-Identity-Id
         → Lambda                 ← business logic (TypeScript)
-            → DynamoDB           ← metadata rows
+            → DynamoDB           ← metadata rows (ownerId = sub or guest#id)
             → S3 (presigned)     ← image files (client uploads direct)
-    ↔ Cognito                    ← sign-in only (separate from API routes)
+    ↔ Cognito User Pool          ← sign-in, JWT (IdToken)
+    ↔ Cognito Identity Pool      ← guest identityId before sign-in
 ```
 
 | Topic                               | Section                                              |
 | ----------------------------------- | ---------------------------------------------------- |
+| Client `.env` sync after deploy     | [Above](#client-environment-sync)                  |
+| Guest uploads (Identity Pool)       | [Above](#guest-photo-upload-identity-pool)           |
+| Merge guest → user after sign-in    | [Above](#merge-guest-photos-after-sign-in)           |
 | S3 vs DynamoDB (what lives where)   | [Above](#storage-s3-vs-dynamodb-what-lives-where)    |
 | AWS services glossary               | [Above](#aws-services-in-this-project)               |
 | AWS account & billing               | [Below](#aws-account--billing)                       |
@@ -993,8 +1335,10 @@ Separate from your login. When you add DynamoDB/S3 in `serverless.yml`, you gran
 
 | File             | Role                                                                |
 | ---------------- | ------------------------------------------------------------------- |
-| `serverless.yml` | Service name, region, functions, events, `resources` (DynamoDB, S3) |
-| `src/`           | TypeScript handlers (`handler.ts`, `photos.ts`, …)                  |
+| `serverless.yml` | Service name, region, functions, events, `resources` (DynamoDB, S3, Cognito) |
+| `scripts/`       | `sync-client-env.sh`, `backup-client-env.sh` — client `VITE_*` after deploy |
+| `docs/`          | `env-configuration.md` — deploy/remove vs local `.env`              |
+| `src/`           | TypeScript handlers (`hello.ts`, `photos.ts`, `guestPhotos.ts`, …) |
 | `.serverless/`   | Generated artifacts after deploy (gitignored)                       |
 
 ### Deploy, CloudFormation & cleanup
@@ -1083,7 +1427,11 @@ API Gateway does **not** store your photos; it forwards requests and returns Lam
 ```yaml
 provider:
   httpApi:
-    cors: true
+    cors:
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+        - X-Guest-Identity-Id
 functions:
   hello:
     handler: src/handlers/hello.hello
@@ -1093,7 +1441,7 @@ functions:
           method: GET
 ```
 
-Routes are declared per function under `events`. This repo also wires **`POST /photos/upload-url`**, **`POST /photos`**, and **`GET /photos`** (see [Current stack](#current-stack)).
+Routes are declared per function under `events`. This repo also wires **`/photos*`**, **`/photos/merge`**, and **`/guest/photos*`** (see [Current stack](#current-stack)).
 
 **End-to-end request flow**
 
@@ -1216,8 +1564,12 @@ This is **not** your personal IAM user. It augments the **Lambda execution role*
 | `POST /photos/upload-url` | `uploadPhotoUrl` | —                    | —                   |
 | `POST /photos`            | `createPhoto`    | `PutItem`            | `dynamodb:PutItem`  |
 | `GET /photos`             | `listPhotos`     | `Query` on `byOwner` | `dynamodb:Query`    |
+| `POST /photos/merge`      | `mergePhotos`    | `Query`, `PutItem`, `DeleteItem` + S3 copy/delete | `dynamodb:*`, `s3:CopyObject`, `s3:DeleteObject` |
+| `POST /guest/photos/upload-url` | `guestUploadPhotoUrl` | `Query` (count) | `dynamodb:Query` |
+| `POST /guest/photos`      | `guestCreatePhoto` | `PutItem`          | `dynamodb:PutItem`  |
+| `GET /guest/photos`       | `guestListPhotos`  | `Query` on `byOwner` | `dynamodb:Query`  |
 
-`GetItem` is allowed now for a future “get one photo by id” route; nothing calls it yet.
+`GetItem` is allowed for a future “get one photo by id” route; nothing calls it yet.
 
 **End-to-end (`POST /photos`)**
 
@@ -1267,10 +1619,13 @@ Items in `src/handlers/photos.ts`: `photoId`, `ownerId`, `s3Key`, `caption`, `cr
 - Effect: Allow
   Action:
     - s3:PutObject
+    - s3:GetObject
+    - s3:CopyObject
+    - s3:DeleteObject
   Resource: !Sub "${PhotosBucket.Arn}/*"
 ```
 
-**`PutObject`** and **`GetObject`** on objects in this bucket—enough to mint presigned PUT (upload) and GET (view) URLs. No public read. See [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works) and [Viewing photos](#viewing-photos-presigned-get).
+**`PutObject`** / **`GetObject`** — presigned upload and view URLs. **`CopyObject`** / **`DeleteObject`** — `POST /photos/merge` moves guest objects into `users/{sub}/`. No public read. See [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works), [Merge guest photos](#merge-guest-photos-after-sign-in), and [Viewing photos](#viewing-photos-presigned-get).
 
 **Bucket (`PhotosBucket` under `resources`)**
 
@@ -1591,9 +1946,9 @@ Two URLs share an origin when **scheme + host + port** all match:
 | `https://app.example.com` | `https://api.example.com/hello` | No (host)    |
 | `http://api.example.com`  | `https://api.example.com/hello` | No (scheme)  |
 
-**Why `httpApi.cors: true`**
+**Why explicit CORS headers**
 
-Browser JavaScript from another origin (e.g. a future React app on `localhost:5173`) cannot read API responses unless the API returns CORS headers. With CORS enabled, API Gateway can respond to **OPTIONS** preflight and attach `Access-Control-Allow-*` on the real **GET**.
+Browser JavaScript from another origin (e.g. the React app on `localhost:5173`) cannot read API responses unless the API returns CORS headers. This repo allows **`Authorization`** (JWT) and **`X-Guest-Identity-Id`** (guest routes) on preflight and real requests — see `provider.httpApi.cors` in `serverless.yml`.
 
 **Typical sequences**
 

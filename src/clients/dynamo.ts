@@ -2,7 +2,22 @@
  * Shared DynamoDB client and table name for photo metadata.
  *
  * `PHOTOS_TABLE` is set in `serverless.yml` from the CloudFormation table ref.
- * The Lambda execution role is scoped to that table only (PutItem, GetItem, Scan).
+ * The Lambda execution role is scoped to that table (+ GSI `byOwner`) only.
+ *
+ * ## AWS SDK v3 Command pattern
+ *
+ * Handlers call `docClient.send(new SomeCommand({ ... }))`. The **Command** object
+ * describes one DynamoDB API request; `.send()` executes it with the Lambda role.
+ *
+ * Commands from `@aws-sdk/lib-dynamodb` (plain JS objects, not low-level AttributeValue maps):
+ *
+ * | Command        | DynamoDB API | Used for in this app                                      |
+ * | -------------- | ------------ | --------------------------------------------------------- |
+ * | `QueryCommand` | Query        | List photos for one `ownerId` via GSI `byOwner`           |
+ * | `PutCommand`   | PutItem      | Save photo metadata after S3 upload; rewrite on merge     |
+ * | `DeleteCommand`| DeleteItem   | Remove old guest row during merge                         |
+ *
+ * @see README — “AWS SDK commands”
  */
 
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";

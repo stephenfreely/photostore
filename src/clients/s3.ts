@@ -4,7 +4,21 @@
  * `PHOTOS_BUCKET` is set in `serverless.yml` from the CloudFormation bucket ref.
  * Objects are private; clients upload via presigned PUT URLs minted by Lambda.
  *
- * @see README — “S3 presigned URLs (how upload signing works)”
+ * ## AWS SDK v3 Command pattern
+ *
+ * Handlers call `s3Client.send(new SomeCommand({ ... }))` for server-side work, or
+ * pass a command to `getSignedUrl(...)` so the **browser** can call S3 without AWS keys.
+ *
+ * Commands from `@aws-sdk/client-s3`:
+ *
+ * | Command               | S3 API       | Used for in this app                               |
+ * | --------------------- | ------------ | -------------------------------------------------- |
+ * | `PutObjectCommand`    | PutObject    | Presigned upload URL (`POST /photos/upload-url`)   |
+ * | `GetObjectCommand`    | GetObject    | Presigned view URL (`GET /photos` → `imageUrl`)    |
+ * | `CopyObjectCommand`   | CopyObject   | Move guest file to `users/{sub}/` during merge     |
+ * | `DeleteObjectCommand` | DeleteObject | Remove old guest object after copy during merge    |
+ *
+ * @see README — “AWS SDK commands” · “S3 presigned URLs (how upload signing works)”
  */
 
 import { S3Client } from "@aws-sdk/client-s3";

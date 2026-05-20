@@ -1243,6 +1243,7 @@ Browser / curl
 | Deploy, CloudFormation & cleanup    | [Below](#deploy-cloudformation--cleanup)             |
 | API Gateway & HTTP                  | [Below](#api-gateway--http)                          |
 | DynamoDB wiring in `serverless.yml` | [Below](#dynamodb-wiring-in-serverlessyml)           |
+| AWS SDK commands (`QueryCommand`, …) | [Below](#aws-sdk-commands-querycommand-putcommand-putobjectcommand-) |
 | S3 wiring in `serverless.yml`       | [Below](#s3-wiring-in-serverlessyml)                 |
 | S3 presigned URLs (upload signing)  | [Below](#s3-presigned-urls-how-upload-signing-works) |
 | React / Amplify client upload flow  | [Below](#react--amplify-client-flow)                 |
@@ -1550,7 +1551,7 @@ In code, `src/clients/dynamo.ts` reads it:
 process.env.PHOTOS_TABLE; // → "photostore-learn-dev-photos"
 ```
 
-`createPhoto` uses `PutCommand`; `listPhotos` uses `QueryCommand` on GSI **`byOwner`**. Hard-coding the table name in TypeScript would break when stage or service name changes; `!Ref` keeps the name in one place in `serverless.yml`.
+`createPhoto` uses `PutCommand`; `listPhotos` uses `QueryCommand` on GSI **`byOwner`**. See [AWS SDK commands](#aws-sdk-commands-querycommand-putcommand-putobjectcommand-) for what each Command class does. Hard-coding the table name in TypeScript would break when stage or service name changes; `!Ref` keeps the name in one place in `serverless.yml`.
 
 **`iam.role.statements` — what Lambda is allowed to do**
 
@@ -1595,6 +1596,101 @@ If IAM were too broad (e.g. `dynamodb:*` on `*`), a bug or compromise in Lambda 
 - **GSI `byOwner`:** `ownerId` (HASH) + `createdAt` (RANGE) — list “my photos” via `Query`
 
 Items in `src/handlers/photos.ts`: `photoId`, `ownerId`, `s3Key`, `caption`, `createdAt`.
+
+### AWS SDK commands (`QueryCommand`, `PutCommand`, `PutObjectCommand`, …)
+
+This repo uses **AWS SDK for JavaScript v3**. Each AWS API call is a **Command** object passed to a shared client’s `.send()` method—not a method like `dynamodb.query()` on the client itself.
+
+```ts
+// DynamoDB — src/clients/dynamo.ts exports docClient
+const result = await docClient.send(
+  new QueryCommand({
+    TableName: photosTableName(),
+    IndexName: "byOwner",
+    KeyConditionExpression: "ownerId = :ownerId",
+    ExpressionAttributeValues: { ":ownerId": auth.ownerId },
+  }),
+);
+
+// S3 — src/clients/s3.ts exports s3Client
+await s3Client.send(
+  new CopyObjectCommand({
+    Bucket: bucket,
+    CopySource: `${bucket}/${oldKey}`,
+    Key: newKey,
+  }),
+);
+```
+
+| Client      | Package                      | Role                                                                 |
+| ----------- | ---------------------------- | -------------------------------------------------------------------- |
+| `docClient` | `@aws-sdk/lib-dynamodb`      | DynamoDB with plain JS objects (not low-level `AttributeValue` maps) |
+| `s3Client`  | `@aws-sdk/client-s3`         | S3 object upload, download, copy, delete                             |
+
+Command classes are imported from those packages in `src/handlers/photos.ts` and `src/handlers/guestPhotos.ts`. Module-level notes also live in `src/clients/dynamo.ts` and `src/clients/s3.ts`.
+
+#### DynamoDB commands (`docClient.send`)
+
+| Command         | Underlying DynamoDB API | What it does                                                                 | Where used                                      |
+| --------------- | ----------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------- |
+| **`QueryCommand`**  | `Query`                 | Read **many items** that share the same partition key (table PK or GSI hash key). Efficient “all photos for this `ownerId`” via GSI **`byOwner`**. | `GET /photos`, `GET /guest/photos`, guest count check, `POST /photos/merge` |
+| **`PutCommand`**    | `PutItem`               | Write **one row** (create or replace the whole item).                        | `POST /photos`, `POST /guest/photos`, merge rewrite |
+| **`DeleteCommand`** | `DeleteItem`            | Remove **one row** by primary key (`photoId`).                               | `POST /photos/merge` (delete old guest row)     |
+
+**`QueryCommand` fields you will see in this repo**
+
+| Field                        | Meaning                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| `TableName`                  | `photostore-learn-dev-photos` from `process.env.PHOTOS_TABLE`                                    |
+| `IndexName: "byOwner"`       | Use the GSI (main table PK is `photoId`; listing by user needs the index)                        |
+| `KeyConditionExpression`     | Which partition to read, e.g. `ownerId = :ownerId`                                               |
+| `ExpressionAttributeValues`  | Binds `:ownerId` to the JWT `sub` (signed-in) or `guest#<identityId>` (guest)                    |
+| `ScanIndexForward: false`    | Sort range key `createdAt` **descending** (newest photos first) on list routes                 |
+
+**Why `QueryCommand` and not a table Scan?** A **Scan** reads every row in the table (slow and expensive at scale). **Query** reads one partition on the main table or a GSI—in our case, one owner’s photos only. IAM allows `dynamodb:Query` on the table + `byOwner` index ARNs in `serverless.yml`.
+
+#### S3 commands (`s3Client.send` or presigned)
+
+| Command                  | Underlying S3 API | What it does                                                          | Where used                         |
+| ------------------------ | ----------------- | --------------------------------------------------------------------- | ---------------------------------- |
+| **`PutObjectCommand`**   | `PutObject`       | Upload object bytes to a key.                                         | Upload-url handlers (via presign)  |
+| **`GetObjectCommand`**   | `GetObject`       | Download object bytes from a key.                                     | List handlers → `imageUrl` (presign) |
+| **`CopyObjectCommand`**  | `CopyObject`      | Server-side copy to a new key (no download through Lambda).           | `POST /photos/merge`               |
+| **`DeleteObjectCommand`**| `DeleteObject`    | Delete object at a key.                                               | `POST /photos/merge` (old guest key) |
+
+#### Presigning: `getSignedUrl` is not a separate Command
+
+For **upload** and **view**, Lambda does **not** stream file bytes. It builds a `PutObjectCommand` or `GetObjectCommand`, then passes it to **`getSignedUrl`** from `@aws-sdk/s3-request-presigner`. That returns a normal HTTPS URL with query parameters that prove the holder may perform that one S3 operation until expiry.
+
+```ts
+// Mint upload URL (client PUTs file bytes directly to S3)
+await getSignedUrl(
+  s3Client,
+  new PutObjectCommand({ Bucket, Key: s3Key, ContentType }),
+  { expiresIn: UPLOAD_URL_EXPIRES_SECONDS },
+);
+
+// Mint view URL (client GETs for <img src> — see list handler)
+await getSignedUrl(
+  s3Client,
+  new GetObjectCommand({ Bucket, Key: s3Key }),
+  { expiresIn: VIEW_URL_EXPIRES_SECONDS },
+);
+```
+
+The bucket stays private; presigned URLs are temporary credentials for **one key** and **one HTTP method** (`PUT` or `GET`).
+
+#### Commands → routes (quick map)
+
+| Route / handler              | DynamoDB commands              | S3 commands                                      |
+| ---------------------------- | ------------------------------ | ------------------------------------------------ |
+| `POST /photos/upload-url`    | —                              | `PutObjectCommand` (presigned)                   |
+| `POST /photos`               | `PutCommand`                   | —                                                |
+| `GET /photos`                | `QueryCommand`                 | `GetObjectCommand` (presigned per row)           |
+| `POST /photos/merge`         | `QueryCommand`, `PutCommand`, `DeleteCommand` | `CopyObjectCommand`, `DeleteObjectCommand` |
+| Guest upload-url / create / list | Same pattern with `guest#…` `ownerId` | Same presign pattern                     |
+
+See also [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml) (IAM `Query` / `PutItem` / `DeleteItem`) and [S3 presigned URLs](#s3-presigned-urls-how-upload-signing-works).
 
 ### S3 wiring in `serverless.yml`
 

@@ -14,7 +14,11 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { DeleteCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DeleteCommand,
+  PutCommand,
+  QueryCommand,
+} from "@aws-sdk/lib-dynamodb";
 import type {
   APIGatewayProxyEventV2,
   APIGatewayProxyStructuredResultV2,
@@ -42,6 +46,17 @@ import { uploadUrlBodySchema } from "../schemas/upload";
 
 /** GSI name for listing photos by owner (see `serverless.yml`). */
 const BY_OWNER_INDEX = "byOwner";
+
+/**
+ * AWS SDK commands used in this file (see `src/clients/dynamo.ts` and `s3.ts`).
+ *
+ * - `QueryCommand` — DynamoDB Query on GSI `byOwner` (list / merge guest lookup)
+ * - `PutCommand` — DynamoDB PutItem (save metadata; rewrite row after merge)
+ * - `DeleteCommand` — DynamoDB DeleteItem (remove guest row after merge)
+ * - `PutObjectCommand` + `getSignedUrl` — presigned client upload
+ * - `GetObjectCommand` + `getSignedUrl` — presigned client download (`imageUrl`)
+ * - `CopyObjectCommand` / `DeleteObjectCommand` — S3 move during merge
+ */
 
 /**
  * One photo metadata row stored in DynamoDB.
@@ -216,13 +231,15 @@ export const list = withHandlerLogging("list", async (
   }
 
   try {
+    // QueryCommand: read all rows for this user on GSI byOwner (ownerId + createdAt).
+    // Does not fetch image bytes — only metadata including s3Key; imageUrl comes next.
     const result = await docClient.send(
       new QueryCommand({
         TableName: photosTableName(),
         IndexName: BY_OWNER_INDEX,
         KeyConditionExpression: "ownerId = :ownerId",
         ExpressionAttributeValues: { ":ownerId": auth.ownerId },
-        ScanIndexForward: false,
+        ScanIndexForward: false, // newest createdAt first
       }),
     );
     const items = (result.Items ?? []) as PhotoItem[];

@@ -2,10 +2,10 @@
 
 ## Two different “env” layers
 
-| Layer | Where it lives | Survives `deploy`? | Survives `remove`? |
-|-------|----------------|--------------------|--------------------|
-| **Backend (Lambda)** | `serverless.yml` → `provider.environment` | Yes (updated in place) | No — stack deleted |
-| **Frontend (Vite)** | `packages/client/.env` | Yes (local file) | Yes (file remains, values stale) |
+| Layer                | Where it lives                            | Survives `deploy`?     | Survives `remove`?               |
+| -------------------- | ----------------------------------------- | ---------------------- | -------------------------------- |
+| **Backend (Lambda)** | `serverless.yml` → `provider.environment` | Yes (updated in place) | No — stack deleted               |
+| **Frontend (Vite)**  | `packages/client/.env`                    | Yes (local file)       | Yes (file remains, values stale) |
 
 The backend does **not** read a `.env` file at runtime. CloudFormation sets Lambda variables (`PHOTOS_TABLE`, `PHOTOS_BUCKET`, etc.) from resources in the same stack.
 

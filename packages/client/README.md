@@ -29,8 +29,8 @@ Configure `.env` from your `yarn deploy` outputs in the monorepo root:
 
 ## Scripts
 
-| Command                | Description                                      |
-| ---------------------- | ------------------------------------------------ |
+| Command             | Description                                      |
+| ------------------- | ------------------------------------------------ |
 | `yarn dev`          | Start dev server (default http://localhost:5173) |
 | `yarn build`        | Production build                                 |
 | `yarn lint`         | ESLint                                           |

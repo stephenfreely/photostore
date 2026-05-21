@@ -6,9 +6,9 @@ Each service is explained where it appears in the repo; start with [AWS services
 
 ## Prerequisites
 
-- Node.js and npm
+- Node.js and Corepack (for Yarn)
 - AWS CLI configured (`aws sts get-caller-identity` works)
-- **`jq`** (for `npm run env:sync` — writes the React client `.env` from stack outputs)
+- **`jq`** (for `yarn env:sync` — writes the React client `.env` from stack outputs)
 - IAM permissions to deploy (CloudFormation, Lambda, API Gateway, Cognito, etc.)
 
 ## Commands (use project-local Serverless v3)
@@ -16,31 +16,32 @@ Each service is explained where it appears in the repo; start with [AWS services
 Global `serverless` may be **v4**, which requires a Serverless.com login. This repo pins **Serverless Framework v3** so you can work without that:
 
 ```bash
-npm install
-npm run print              # validate serverless.yml
-npm run deploy             # deploy stack
-npm run deploy:sync        # deploy + write ../photostoreclient/.env from outputs
-npm run env:sync           # sync client .env only (after deploy)
-npm run env:backup         # snapshot client .env before remove
-npm run remove:safe        # backup client .env, then serverless remove
-npx serverless invoke -f hello --log
+corepack enable
+yarn install
+yarn print                 # validate serverless.yml
+yarn deploy                # deploy stack
+yarn deploy:sync           # deploy + write packages/client/.env from outputs
+yarn env:sync              # sync client .env only (after deploy)
+yarn env:backup            # snapshot client .env before remove
+yarn remove:safe           # backup client .env, then serverless remove
+yarn serverless invoke -f hello --log
 ```
 
 See [Client environment sync](#client-environment-sync) and [`docs/env-configuration.md`](docs/env-configuration.md) for what survives `deploy` vs `remove`.
 
 ## Client environment sync
 
-Deploy creates AWS resources; the **React client** (`../photostoreclient`) needs matching `VITE_*` variables. They are **not** read from a backend `.env` at Lambda runtime — CloudFormation injects `PHOTOS_TABLE`, `PHOTOS_BUCKET`, etc. into functions directly.
+Deploy creates AWS resources; the **React client** (`packages/client`) needs matching `VITE_*` variables. They are **not** read from a backend `.env` at Lambda runtime — CloudFormation injects `PHOTOS_TABLE`, `PHOTOS_BUCKET`, etc. into functions directly.
 
 | Layer              | Where                         | Survives `remove`? |
 | ------------------ | ----------------------------- | ------------------ |
 | Backend (Lambda)   | `serverless.yml` → stack      | No — stack deleted |
-| Frontend (Vite)    | `../photostoreclient/.env`    | File remains (stale ids) |
+| Frontend (Vite)    | `packages/client/.env`    | File remains (stale ids) |
 
 ```bash
-npm run deploy:sync    # deploy + write client .env
+yarn deploy:sync    # deploy + write client .env
 # or separately:
-npm run deploy && npm run env:sync
+yarn deploy && yarn env:sync
 ```
 
 `env:sync` reads CloudFormation outputs and writes:
@@ -56,8 +57,8 @@ VITE_AWS_REGION=us-east-1
 A snapshot is saved to `.deploy/outputs-dev.json` (gitignored). Before tearing down the stack:
 
 ```bash
-npm run env:backup      # → .deploy/env-backups/client-env-<timestamp>.env
-npm run remove:safe     # backup + serverless remove
+yarn env:backup      # → .deploy/env-backups/client-env-<timestamp>.env
+yarn remove:safe     # backup + serverless remove
 ```
 
 After a **fresh** deploy, run `env:sync` again and restart the Vite dev server. Full notes: [`docs/env-configuration.md`](docs/env-configuration.md).
@@ -90,7 +91,7 @@ curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/hello"
 - **DynamoDB:** `photostore-learn-dev-photos` — metadata only (`s3Key` points at S3) — [Storage: S3 vs DynamoDB](#storage-s3-vs-dynamodb-what-lives-where) · [DynamoDB wiring](#dynamodb-wiring-in-serverlessyml)
 - **S3:** private bucket; signed-in objects under `users/{sub}/photos/`; guest objects under `guests/{identityId}/photos/` — [Storage: S3 vs DynamoDB](#storage-s3-vs-dynamodb-what-lives-where) · [S3 wiring](#s3-wiring-in-serverlessyml)
 
-After deploy, note **Outputs**: `UserPoolId`, `UserPoolClientId`, `IdentityPoolId`, `HttpApiUrl` (from Serverless), `CognitoIssuer`. Run **`npm run env:sync`** to write `VITE_*` values into `../photostoreclient/.env`.
+After deploy, note **Outputs**: `UserPoolId`, `UserPoolClientId`, `IdentityPoolId`, `HttpApiUrl` (from Serverless), `CognitoIssuer`. Run **`yarn env:sync`** to write `VITE_*` values into `packages/client/.env`.
 
 ### Source layout (`src/`)
 
@@ -821,7 +822,7 @@ resources:
 | `CognitoIssuer`    | Must match JWT authorizer `issuerUrl` (debugging)                                |
 | `HttpApiUrl`       | From **Serverless** automatically (do not duplicate in `Outputs`) — API base URL |
 
-Use **`npm run env:sync`** to populate all `VITE_*` values in `../photostoreclient/.env` after deploy.
+Use **`yarn env:sync`** to populate all `VITE_*` values in `packages/client/.env` after deploy.
 
 Lambda does **not** verify JWTs itself for protected routes; API Gateway does. `src/lib/auth.ts` only reads **`sub`** from claims the authorizer already validated.
 
@@ -849,7 +850,7 @@ CognitoIdentityPoolRoles:
 | `AllowUnauthenticatedIdentities` | Browser can call `GetId` before sign-in |
 | `CognitoUnauthenticatedRole` | Minimal policy (`cognito-identity:GetId` only) |
 | Guest routes | No `authorizer` in `serverless.yml`; Lambda trusts `X-Guest-Identity-Id` + prefix checks |
-| `IdentityPoolId` output | `VITE_IDENTITY_POOL_ID` via `npm run env:sync` |
+| `IdentityPoolId` output | `VITE_IDENTITY_POOL_ID` via `yarn env:sync` |
 
 ### JWT request flow
 
@@ -937,7 +938,7 @@ VITE_IDENTITY_POOL_ID=us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 VITE_AWS_REGION=us-east-1
 ```
 
-Or run **`npm run env:sync`** from the repo root after deploy (writes `../photostoreclient/.env` automatically).
+Or run **`yarn env:sync`** from the repo root after deploy (writes `packages/client/.env` automatically).
 
 #### Configure Amplify Auth
 
@@ -1328,7 +1329,7 @@ Separate from your login. When you add DynamoDB/S3 in `serverless.yml`, you gran
 **This repo**
 
 - `frameworkVersion: "3"` and `serverless` in `devDependencies` → use **`npx serverless deploy`**, not bare `serverless` from PATH.
-- **`npm run print`** expands `serverless.yml` to the final CloudFormation-oriented config (good sanity check before deploy).
+- **`yarn print`** expands `serverless.yml` to the final CloudFormation-oriented config (good sanity check before deploy).
 
 **v3 vs global v4**
 

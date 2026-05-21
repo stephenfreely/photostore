@@ -8,7 +8,7 @@ STAGE="${1:-dev}"
 SERVICE="photostore-learn"
 STACK="${SERVICE}-${STAGE}"
 REGION="${AWS_REGION:-us-east-1}"
-CLIENT_ENV="${2:-../photostoreclient/.env}"
+CLIENT_ENV="${2:-packages/client/.env}"
 SNAPSHOT_DIR="$(cd "$(dirname "$0")/.." && pwd)/.deploy"
 
 mkdir -p "$SNAPSHOT_DIR"

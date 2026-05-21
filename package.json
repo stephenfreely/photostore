@@ -1,6 +1,10 @@
 {
   "name": "photostore-learn",
   "private": true,
+  "packageManager": "yarn@4.15.0+sha512.07ec708ac11e2eaa4ea2b04cfbb272812f7e74a753f1595eaef4486c663a98306a30cca3e6fc40f7a0b168dcfb3a2490b6a5e0501e20fb69cc36f563dd161c53",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "build": "serverless package",
     "print": "serverless print",
@@ -11,6 +15,10 @@
     "env:sync": "./scripts/sync-client-env.sh",
     "env:backup": "./scripts/backup-client-env.sh",
     "typecheck": "tsc --noEmit",
+    "client:dev": "yarn workspace photostoreclient dev",
+    "client:build": "yarn workspace photostoreclient build",
+    "client:lint": "yarn workspace photostoreclient lint",
+    "client:preview": "yarn workspace photostoreclient preview",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

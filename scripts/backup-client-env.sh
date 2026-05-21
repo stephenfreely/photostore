@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-CLIENT_ENV="${1:-../photostoreclient/.env}"
+CLIENT_ENV="${1:-packages/client/.env}"
 BACKUP_DIR="$(cd "$(dirname "$0")/.." && pwd)/.deploy/env-backups"
 
 if [[ ! -f "$CLIENT_ENV" ]]; then

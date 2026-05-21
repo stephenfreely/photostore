@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PhotoStore — Building with Cursor</title>
+    <style>
+      :root {
+        --bg: #0f1419;
+        --surface: #1a2332;
+        --surface-2: #243044;
+        --text: #e8edf4;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --accent-2: #a78bfa;
+        --success: #4ade80;
+        --prompt-bg: #0c1220;
+        --border: rgba(148, 163, 184, 0.2);
+        --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+        --mono: "SF Mono", "Fira Code", ui-monospace, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.55;
+        overflow-x: hidden;
+      }
+
+      /* Progress bar */
+      .progress {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 3px;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        z-index: 100;
+        transition: width 0.15s ease;
+      }
+
+      /* Nav dots */
+      .nav-dots {
+        position: fixed;
+        right: 1.25rem;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        z-index: 50;
+      }
+
+      .nav-dots a {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--surface-2);
+        border: 2px solid var(--border);
+        transition: background 0.2s, transform 0.2s;
+      }
+
+      .nav-dots a:hover,
+      .nav-dots a.active {
+        background: var(--accent);
+        transform: scale(1.2);
+      }
+
+      /* Slides */
+      .deck {
+        scroll-snap-type: y mandatory;
+        height: 100vh;
+        overflow-y: scroll;
+      }
+
+      section.slide {
+        min-height: 100vh;
+        scroll-snap-align: start;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 4rem clamp(1.5rem, 6vw, 5rem);
+        max-width: 1100px;
+        margin: 0 auto;
+        position: relative;
+      }
+
+      section.slide::before {
+        content: attr(data-chapter);
+        position: absolute;
+        top: 2rem;
+        left: clamp(1.5rem, 6vw, 5rem);
+        font-size: 0.75rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .slide-number {
+        position: absolute;
+        bottom: 2rem;
+        right: clamp(1.5rem, 6vw, 5rem);
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+
+      h1 {
+        font-size: clamp(2.2rem, 5vw, 3.5rem);
+        font-weight: 700;
+        line-height: 1.15;
+        margin-bottom: 1rem;
+        background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      h2 {
+        font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+        margin-bottom: 1.25rem;
+        color: var(--text);
+      }
+
+      h3 {
+        font-size: 1.15rem;
+        color: var(--accent);
+        margin: 1.5rem 0 0.75rem;
+        font-weight: 600;
+      }
+
+      .subtitle {
+        font-size: clamp(1.1rem, 2vw, 1.35rem);
+        color: var(--muted);
+        max-width: 42rem;
+      }
+
+      .lead {
+        font-size: 1.2rem;
+        max-width: 38rem;
+        margin-bottom: 1.5rem;
+      }
+
+      ul.plain {
+        list-style: none;
+        margin: 1rem 0;
+      }
+
+      ul.plain li {
+        padding: 0.5rem 0 0.5rem 1.75rem;
+        position: relative;
+        color: var(--muted);
+      }
+
+      ul.plain li::before {
+        content: "→";
+        position: absolute;
+        left: 0;
+        color: var(--accent);
+      }
+
+      ul.plain li strong {
+        color: var(--text);
+      }
+
+      /* Cards */
+      .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 1.25rem;
+        margin-top: 1.5rem;
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+      }
+
+      .card h4 {
+        font-size: 1rem;
+        margin-bottom: 0.5rem;
+        color: var(--accent-2);
+      }
+
+      .card p {
+        font-size: 0.95rem;
+        color: var(--muted);
+      }
+
+      /* Prompt blocks */
+      .prompt {
+        background: var(--prompt-bg);
+        border-left: 4px solid var(--accent);
+        border-radius: 0 10px 10px 0;
+        padding: 1rem 1.25rem;
+        margin: 1rem 0;
+        font-family: var(--mono);
+        font-size: 0.92rem;
+        color: #cbd5e1;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .prompt-label {
+        font-size: 0.7rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-bottom: 0.35rem;
+        font-family: var(--font);
+      }
+
+      .outcome {
+        background: rgba(74, 222, 128, 0.08);
+        border: 1px solid rgba(74, 222, 128, 0.25);
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        margin: 1rem 0 1.5rem;
+      }
+
+      .outcome strong {
+        color: var(--success);
+        display: block;
+        margin-bottom: 0.35rem;
+        font-size: 0.8rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .outcome p {
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      /* Flow diagram */
+      .flow {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin: 2rem 0;
+        font-size: 0.95rem;
+      }
+
+      .flow-step {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        padding: 0.75rem 1.25rem;
+        border-radius: 999px;
+      }
+
+      .flow-arrow {
+        color: var(--accent);
+        font-size: 1.25rem;
+      }
+
+      /* Placeholder for teammate */
+      .placeholder-section {
+        border: 2px dashed var(--border);
+        border-radius: 16px;
+        padding: 2rem;
+        margin-top: 1.5rem;
+        background: rgba(167, 139, 250, 0.05);
+      }
+
+      .placeholder-section h3 {
+        color: var(--accent-2);
+      }
+
+      .add-prompt-hint {
+        font-size: 0.85rem;
+        color: var(--muted);
+        margin-top: 1rem;
+        font-style: italic;
+      }
+
+      .authors {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-top: 2rem;
+      }
+
+      .author-badge {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        padding: 0.6rem 1.2rem;
+        border-radius: 999px;
+        font-size: 0.9rem;
+      }
+
+      .author-badge.done {
+        border-color: var(--success);
+      }
+
+      .author-badge.pending {
+        opacity: 0.7;
+      }
+
+      .kbd {
+        display: inline-block;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.15rem 0.45rem;
+        font-size: 0.8rem;
+        font-family: var(--mono);
+      }
+
+      footer.hint {
+        position: fixed;
+        bottom: 1rem;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 0.75rem;
+        color: var(--muted);
+        background: rgba(15, 20, 25, 0.9);
+        padding: 0.4rem 1rem;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        z-index: 40;
+      }
+
+      @media (max-width: 768px) {
+        .nav-dots {
+          display: none;
+        }
+        footer.hint {
+          display: none;
+        }
+      }
+
+      @media print {
+        .deck {
+          height: auto;
+          overflow: visible;
+        }
+        section.slide {
+          page-break-after: always;
+          min-height: auto;
+          padding: 2rem;
+        }
+        .nav-dots,
+        .progress,
+        footer.hint {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="progress" id="progress" style="width: 0%"></div>
+    <nav class="nav-dots" id="navDots" aria-label="Slide navigation"></nav>
+    <footer class="hint">
+      <span class="kbd">↓</span> or <span class="kbd">Space</span> next slide ·
+      <span class="kbd">↑</span> previous
+    </footer>
+
+    <main class="deck" id="deck">
+      <!-- 1 -->
+      <section class="slide" data-chapter="Welcome" id="s1">
+        <h1>PhotoStore</h1>
+        <p class="subtitle">
+          How we built a cloud photo app using <strong>plain-English prompts</strong> in
+          Cursor — told for anyone, no coding background required.
+        </p>
+        <div class="authors">
+          <span class="author-badge done">Vivek — prompts documented</span>
+          <span class="author-badge pending">Teammate — section ready to fill in</span>
+        </div>
+        <span class="slide-number">1</span>
+      </section>
+
+      <!-- 2 -->
+      <section class="slide" data-chapter="The app" id="s2">
+        <h2>What did we build?</h2>
+        <p class="lead">
+          <strong>PhotoStore</strong> is a web app where people can upload and view photos.
+          The files live securely in Amazon Web Services (AWS) — like a private locker in the
+          cloud.
+        </p>
+        <div class="grid-2">
+          <div class="card">
+            <h4>For signed-in users</h4>
+            <p>Create an account, sign in, upload photos, and see your own gallery.</p>
+          </div>
+          <div class="card">
+            <h4>For visitors (guests)</h4>
+            <p>Try the app first — upload up to 2 photos before signing up. When they create an account, those photos move to their account.</p>
+          </div>
+          <div class="card">
+            <h4>Behind the scenes</h4>
+            <p>Small programs in the cloud handle uploads, security, and storage — we did not have to wire all of that by hand.</p>
+          </div>
+          <div class="card">
+            <h4>One project folder</h4>
+            <p>Website and cloud backend now live together in one repository (a monorepo), so the team works in one place.</p>
+          </div>
+        </div>
+        <span class="slide-number">2</span>
+      </section>
+
+      <!-- 3 -->
+      <section class="slide" data-chapter="Cursor" id="s3">
+        <h2>What is Cursor?</h2>
+        <p class="lead">
+          Cursor is a code editor with an AI assistant built in. Instead of writing every
+          line yourself, you <strong>describe what you want</strong> — the assistant reads
+          the project and makes changes, explains them, and runs commands when needed.
+        </p>
+        <div class="flow">
+          <span class="flow-step">You type a prompt</span>
+          <span class="flow-arrow">→</span>
+          <span class="flow-step">AI reads the codebase</span>
+          <span class="flow-arrow">→</span>
+          <span class="flow-step">Code & docs update</span>
+          <span class="flow-arrow">→</span>
+          <span class="flow-step">You review & deploy</span>
+        </div>
+        <ul class="plain">
+          <li><strong>Prompt</strong> — your instruction in everyday language</li>
+          <li><strong>Outcome</strong> — what actually changed (features, docs, fixes)</li>
+          <li><strong>Iteration</strong> — follow-up prompts refine the result (like editing a draft)</li>
+        </ul>
+        <span class="slide-number">3</span>
+      </section>
+
+      <!-- 4 -->
+      <section class="slide" data-chapter="Vivek · Deploy" id="s4">
+        <h2>Vivek's prompts — Getting it on AWS</h2>
+        <p class="subtitle">First goal: run the project on a real AWS account.</p>
+
+        <div class="prompt-label">Prompt</div>
+        <div class="prompt">can you follow all steps for me to deploy this project on my aws account</div>
+        <div class="outcome">
+          <strong>What happened</strong>
+          <p>
+            The assistant walked through prerequisites (AWS CLI, Node, Yarn), deployed the
+            cloud stack, and connected the pieces so the API and login system were live in
+            your account.
+          </p>
+        </div>
+
+        <div class="prompt-label">Follow-up prompt</div>
+        <div class="prompt">do I need this in FE code CognitoIssuer</div>
+        <div class="outcome">
+          <strong>What happened</strong>
+          <p>
+            Clarified what the React app actually needs from deploy outputs — keeping the
+            front end simple and avoiding unused configuration.
+          </p>
+        </div>
+
+        <div class="prompt-label">Follow-up prompt</div>
+        <div class="prompt">run serverless remove</div>
+        <div class="outcome">
+          <strong>What happened</strong>
+          <p>
+            Tore down the cloud stack safely (including emptying the storage bucket first so
+            removal could complete). Useful for cleanup or starting fresh.
+          </p>
+        </div>
+        <span class="slide-number">4</span>
+      </section>
+
+      <!-- 5 -->
+      <section class="slide" data-chapter="Vivek · Docs" id="s5">
+        <h2>Vivek's prompts — Documentation & diagrams</h2>
+        <p class="subtitle">So the team (and future readers) understand how it works.</p>
+
+        <div class="prompt-label">Prompt</div>
+        <div class="prompt">update readme file for all the changes I requested in last 3 commits including diagrams and whatever</div>
+        <div class="outcome">
+          <strong>What happened</strong>
+          <p>
+            Expanded the main README to cover recent work (guest photo upload, environment
+            sync after deploy, merge-on-sign-in), API tables, and <strong>Mermaid
+            diagrams</strong> (flowcharts and sequences) so non-coders can follow the guest →
+            sign-in → merge journey visually.
+          </p>
+        </div>
+        <span class="slide-number">5</span>
+      </section>
+
+      <!-- 6 -->
+      <section class="slide" data-chapter="Vivek · Monorepo" id="s6">
+        <h2>Vivek's prompts — One repository for everything</h2>
+
+        <div class="prompt-label">Prompt</div>
+        <div class="prompt">can you migrate the client to this same repository and make a monorepo
+
+use yarn workspaces and latest version of yearn possile</div>
+        <div class="outcome">
+          <strong>What happened</strong>
+          <p>
+            Moved the React website into <code>packages/client</code> and the cloud API into
+            <code>packages/api</code>, set up Yarn 4 workspaces, and unified commands like
+            <code>yarn dev</code> and <code>yarn deploy:sync</code> from the project root.
+          </p>
+        </div>
+
+        <div class="prompt-label">Later prompt</div>
+        <div class="prompt">can you pull changes and resolve conflicts</div>
+        <div class="outcome">
+          <strong>What happened</strong>
+          <p>
+            Synced with remote Git changes and merged overlapping edits so both teammates'
+            work could land in one branch.
+          </p>
+        </div>
+
+        <div class="prompt-label">Follow-up prompt</div>
+        <div class="prompt">update readme to match the new project strcuture</div>
+        <div class="outcome">
+          <strong>What happened</strong>
+          <p>
+            Rewrote README paths, folder trees, and commands for the monorepo layout so
+            documentation matched reality.
+          </p>
+        </div>
+        <span class="slide-number">6</span>
+      </section>
+
+      <!-- 7 -->
+      <section class="slide" data-chapter="Vivek · Router" id="s7">
+        <h2>Vivek's prompts — Better website navigation</h2>
+
+        <div class="prompt-label">Prompt</div>
+        <div class="prompt">introduce tanstack router in the client</div>
+        <div class="outcome">
+          <strong>What happened</strong>
+          <p>
+            Added proper pages: home, login, sign-up, and forgot-password — with URLs you
+            can bookmark and share. Guests still see the try-before-sign-up photo area on auth
+            pages.
+          </p>
+        </div>
+        <span class="slide-number">7</span>
+      </section>
+
+      <!-- 8 -->
+      <section class="slide" data-chapter="Vivek · Ops" id="s8">
+        <h2>Vivek's prompts — Monitoring & merge docs</h2>
+
+        <div class="prompt-label">Prompt</div>
+        <div class="prompt">add cloudwatch</div>
+        <div class="outcome">
+          <strong>What happened</strong>
+          <p>
+            Wired CloudWatch logging so cloud functions leave traces you can inspect when
+            something goes wrong in production.
+          </p>
+        </div>
+
+        <div class="prompt-label">Follow-up prompt</div>
+        <div class="prompt">can you also add logs for all the handlers</div>
+        <div class="outcome">
+          <strong>What happened</strong>
+          <p>
+            Added consistent logging across API handlers — easier to debug uploads, guest
+            limits, and merge operations.
+          </p>
+        </div>
+
+        <div class="prompt-label">Prompt (documentation)</div>
+        <div class="prompt">I need more documentation on this handler</div>
+        <div class="prompt-label">Follow-up prompt</div>
+        <div class="prompt">not in yml file it needs to be in readme</div>
+        <div class="outcome">
+          <strong>What happened</strong>
+          <p>
+            Wrote a detailed README section for <strong>merging guest photos after
+            sign-in</strong> — when to call it, request/response examples, errors, and a
+            sequence diagram — without cluttering config files.
+          </p>
+        </div>
+        <span class="slide-number">8</span>
+      </section>
+
+      <!-- 9 -->
+      <section class="slide" data-chapter="Summary" id="s9">
+        <h2>What we learned</h2>
+        <ul class="plain">
+          <li><strong>Start with outcomes</strong> — “deploy on my AWS,” “guest can upload 2 photos,” not low-level code requests</li>
+          <li><strong>Follow up in plain language</strong> — “put that in the README,” “add logs everywhere,” “fix the readme for the new folders”</li>
+          <li><strong>Let the AI handle glue</strong> — monorepo moves, merge conflicts, env sync scripts</li>
+          <li><strong>Document for humans</strong> — diagrams and README sections matter as much as the code</li>
+        </ul>
+        <div class="grid-2" style="margin-top: 2rem">
+          <div class="card">
+            <h4>Project repo</h4>
+            <p>photostore — API + React client in one Yarn workspace</p>
+          </div>
+          <div class="card">
+            <h4>Full technical README</h4>
+            <p>See README.md in the repository for stack details, curl examples, and architecture diagrams</p>
+          </div>
+        </div>
+        <span class="slide-number">9</span>
+      </section>
+
+      <!-- 10 Teammate placeholder -->
+      <section class="slide" data-chapter="Teammate" id="s10">
+        <h2>Your teammate's prompts</h2>
+        <p class="lead">
+          This section is reserved for the second author. Copy the same pattern: prompt →
+          what happened in plain English.
+        </p>
+
+        <div class="placeholder-section" id="teammate-prompts">
+          <h3>Prompt 1 — add title & text here</h3>
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt" contenteditable="true">[ Teammate: paste your Cursor prompt here ]</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p contenteditable="true">[ Teammate: describe the outcome in plain language ]</p>
+          </div>
+
+          <h3 style="margin-top: 2rem">Prompt 2 — duplicate this block as needed</h3>
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt" contenteditable="true">[ Second prompt ]</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p contenteditable="true">[ Outcome ]</p>
+          </div>
+
+          <p class="add-prompt-hint">
+            Tip: In the browser you can click the gray boxes above and type directly, or edit
+            this HTML file under <code>docs/cursor-prompts-presentation.html</code>.
+          </p>
+        </div>
+        <span class="slide-number">10</span>
+      </section>
+
+      <!-- 11 -->
+      <section class="slide" data-chapter="End" id="s11">
+        <h1>Questions?</h1>
+        <p class="subtitle">
+          PhotoStore shows that a small team can ship AWS-backed features by steering an AI
+          with clear prompts — then reviewing the result like any other team deliverable.
+        </p>
+        <p class="subtitle" style="margin-top: 1.5rem; font-size: 1rem">
+          Open this file locally: double-click
+          <code>docs/cursor-prompts-presentation.html</code> or drag it into any browser.
+        </p>
+        <span class="slide-number">11</span>
+      </section>
+    </main>
+
+    <script>
+      (function () {
+        const deck = document.getElementById("deck");
+        const slides = [...deck.querySelectorAll(".slide")];
+        const progress = document.getElementById("progress");
+        const nav = document.getElementById("navDots");
+
+        slides.forEach((slide, i) => {
+          const a = document.createElement("a");
+          a.href = "#" + slide.id;
+          a.title = "Slide " + (i + 1);
+          a.setAttribute("aria-label", "Go to slide " + (i + 1));
+          nav.appendChild(a);
+        });
+
+        const dots = [...nav.querySelectorAll("a")];
+
+        function setActive(index) {
+          dots.forEach((d, i) => d.classList.toggle("active", i === index));
+          progress.style.width = ((index + 1) / slides.length) * 100 + "%";
+        }
+
+        const observer = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              if (entry.isIntersecting) {
+                const idx = slides.indexOf(entry.target);
+                if (idx >= 0) setActive(idx);
+              }
+            });
+          },
+          { root: deck, threshold: 0.55 }
+        );
+
+        slides.forEach((s) => observer.observe(s));
+
+        let scrollLock = false;
+        function go(delta) {
+          const rect = deck.getBoundingClientRect();
+          let current = 0;
+          let best = Infinity;
+          slides.forEach((s, i) => {
+            const d = Math.abs(s.getBoundingClientRect().top - rect.top);
+            if (d < best) {
+              best = d;
+              current = i;
+            }
+          });
+          const next = Math.min(slides.length - 1, Math.max(0, current + delta));
+          if (next !== current) {
+            scrollLock = true;
+            slides[next].scrollIntoView({ behavior: "smooth" });
+            setTimeout(() => (scrollLock = false), 600);
+          }
+        }
+
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "ArrowDown" || e.key === " " || e.key === "PageDown") {
+            e.preventDefault();
+            go(1);
+          } else if (e.key === "ArrowUp" || e.key === "PageUp") {
+            e.preventDefault();
+            go(-1);
+          }
+        });
+
+        setActive(0);
+      })();
+    </script>
+  </body>
+</html>

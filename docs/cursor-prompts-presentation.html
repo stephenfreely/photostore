@@ -265,6 +265,172 @@
         font-size: 1.25rem;
       }
 
+      /* Architecture diagrams (plain-language) */
+      .arch-diagram {
+        margin: 1.5rem 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+        width: 100%;
+        max-width: 52rem;
+      }
+
+      .arch-box {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 0.85rem 1.25rem;
+        text-align: center;
+        width: 100%;
+        max-width: 28rem;
+      }
+
+      .arch-box strong {
+        display: block;
+        color: var(--text);
+        font-size: 1rem;
+        margin-bottom: 0.2rem;
+      }
+
+      .arch-box span {
+        font-size: 0.88rem;
+        color: var(--muted);
+      }
+
+      .arch-box.accent {
+        border-color: rgba(56, 189, 248, 0.45);
+        background: rgba(56, 189, 248, 0.08);
+      }
+
+      .arch-box.accent-2 {
+        border-color: rgba(167, 139, 250, 0.45);
+        background: rgba(167, 139, 250, 0.08);
+      }
+
+      .arch-box.success {
+        border-color: rgba(74, 222, 128, 0.35);
+        background: rgba(74, 222, 128, 0.06);
+      }
+
+      .arch-arrow-down {
+        color: var(--accent);
+        font-size: 1.35rem;
+        line-height: 1;
+      }
+
+      .arch-row-3 {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 0.75rem;
+        width: 100%;
+        max-width: 52rem;
+      }
+
+      .arch-row-3 .arch-box {
+        max-width: none;
+      }
+
+      .arch-caption {
+        font-size: 0.85rem;
+        color: var(--muted);
+        text-align: center;
+        max-width: 40rem;
+        margin-top: 0.5rem;
+      }
+
+      .steps-vertical {
+        list-style: none;
+        margin: 1.25rem 0;
+        max-width: 42rem;
+      }
+
+      .steps-vertical li {
+        display: grid;
+        grid-template-columns: 2.25rem 1fr;
+        gap: 1rem;
+        padding: 0.85rem 0;
+        border-bottom: 1px solid var(--border);
+        align-items: start;
+      }
+
+      .steps-vertical li:last-child {
+        border-bottom: none;
+      }
+
+      .step-num {
+        width: 2.25rem;
+        height: 2.25rem;
+        border-radius: 50%;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        color: var(--accent);
+        font-size: 0.95rem;
+      }
+
+      .step-body strong {
+        color: var(--text);
+        display: block;
+        margin-bottom: 0.2rem;
+      }
+
+      .step-body span {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .glossary {
+        font-size: 0.88rem;
+        margin-top: 1rem;
+      }
+
+      .glossary dt {
+        color: var(--accent);
+        font-weight: 600;
+        margin-top: 0.65rem;
+      }
+
+      .glossary dt:first-child {
+        margin-top: 0;
+      }
+
+      .glossary dd {
+        color: var(--muted);
+        margin: 0.15rem 0 0 0;
+      }
+
+      section.slide.diagram-slide {
+        justify-content: flex-start;
+        padding-top: 3.25rem;
+      }
+
+      .mermaid-wrap {
+        width: 100%;
+        max-width: 54rem;
+        margin: 0.75rem 0 0;
+        overflow: auto;
+        max-height: min(58vh, 460px);
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(12, 18, 32, 0.6);
+        padding: 1rem;
+      }
+
+      .mermaid-wrap .mermaid {
+        display: flex;
+        justify-content: center;
+        min-width: min(100%, 520px);
+      }
+
+      .mermaid-wrap svg {
+        max-width: 100%;
+        height: auto;
+      }
+
       /* Placeholder for teammate */
       .placeholder-section {
         border: 2px dashed var(--border);
@@ -499,6 +665,174 @@
         <span class="slide-number">2</span>
       </section>
 
+      <!-- Architecture 1 -->
+      <section class="slide diagram-slide" data-chapter="How it works" id="s-arch-1">
+        <h2>Website and cloud — the big picture</h2>
+        <p class="subtitle">
+          You only use the <strong>website</strong>. It talks to a back office and a photo
+          locker — plus a catalog of who owns each photo.
+        </p>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+flowchart TB
+  subgraph you ["You"]
+    Person[Person in a browser]
+  end
+  subgraph shop ["What you see — the website"]
+    Site[PhotoStore website<br/>sign in · upload · gallery]
+  end
+  subgraph office ["Behind the scenes — cloud back office"]
+    Login[Account and sign-in<br/>who is this person?]
+    Desk[Photo service desk<br/>rules · lists · passes]
+    Index[Photo catalog<br/>captions and ownership]
+  end
+  subgraph vault ["Where files live"]
+    Locker[Secure photo locker<br/>actual image files]
+  end
+  Person --> Site
+  Site <-->|sign in / sign out| Login
+  Site <-->|requests and lists| Desk
+  Desk <-->|records| Index
+  Site <-->|upload and view with passes| Locker
+  Desk <-->|organize files| Locker
+          </pre>
+        </div>
+        <span class="slide-number">3</span>
+      </section>
+
+      <!-- Architecture 2 -->
+      <section class="slide diagram-slide" data-chapter="How it works" id="s-arch-2">
+        <h2>Uploading a photo</h2>
+        <p class="subtitle">
+          The desk gives a <strong>temporary upload pass</strong>; the heavy file goes
+          straight to the locker, then the catalog is updated.
+        </p>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+sequenceDiagram
+  actor You as You
+  participant Window as Website
+  participant Desk as Back office
+  participant Locker as Photo locker
+  participant Catalog as Photo catalog
+  You->>Window: Choose photo and caption
+  Window->>Desk: May I upload? signed in or guest
+  Desk-->>Window: Temporary upload pass
+  Window->>Locker: Put image in locker
+  Locker-->>Window: Saved
+  Window->>Desk: Add to my gallery list
+  Desk->>Catalog: Save caption and link
+  Desk-->>Window: Done
+  Window-->>You: Photo in gallery
+          </pre>
+        </div>
+        <span class="slide-number">4</span>
+      </section>
+
+      <!-- Architecture 3 -->
+      <section class="slide diagram-slide" data-chapter="How it works" id="s-arch-3">
+        <h2>Viewing your gallery</h2>
+        <p class="subtitle">
+          The website gets your list, then <strong>short-lived view links</strong> — like day
+          passes to peek in the locker.
+        </p>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+flowchart LR
+  You[You open gallery] --> Site[Website]
+  Site --> Desk[Back office<br/>list my photos]
+  Desk --> Catalog[Photo catalog]
+  Catalog --> Desk
+  Desk --> Site[View link per photo]
+  Site --> Locker[Photo locker]
+  Locker --> Site[Images in browser]
+  Site --> You[You see your photos]
+          </pre>
+        </div>
+        <span class="slide-number">5</span>
+      </section>
+
+      <!-- Architecture 4 -->
+      <section class="slide diagram-slide" data-chapter="How it works" id="s-arch-4">
+        <h2>Guests, members, and after sign-up</h2>
+        <p class="subtitle">
+          Guests may upload <strong>2 photos</strong> before joining; those photos move to
+          the new account when they sign up.
+        </p>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+flowchart TB
+  subgraph guest ["Try before sign-up — guest"]
+    G1[Website gets temporary guest ID]
+    G2[Upload up to 2 photos<br/>same locker and catalog flow]
+    G1 --> G2
+  end
+  subgraph member ["Signed-in member"]
+    M1[Sign in with email and password]
+    M2[Ongoing uploads and gallery]
+    M1 --> M2
+  end
+  subgraph welcome ["When guest creates an account"]
+    W1[Sign up or sign in]
+    W2[Back office moves guest photos<br/>into the new account]
+    W1 --> W2
+  end
+  guest --> welcome
+  member --> welcome
+          </pre>
+        </div>
+        <span class="slide-number">6</span>
+      </section>
+
+      <!-- Architecture 5 -->
+      <section class="slide diagram-slide" data-chapter="How it works" id="s-arch-5">
+        <h2>Sign-in — how the website knows it’s you</h2>
+        <p class="subtitle">
+          Passwords live with the <strong>account service</strong>. The photo desk only helps
+          when the website shows valid proof from sign-in.
+        </p>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+flowchart LR
+  Site[Website] -->|email and password| Login[Account service]
+  Login -->|verified| Site
+  Site -->|photo requests include<br/>proof you signed in| Desk[Back office]
+  Desk -->|checks proof first| Site
+          </pre>
+        </div>
+        <span class="slide-number">7</span>
+      </section>
+
+      <!-- Architecture 6 -->
+      <section class="slide diagram-slide" data-chapter="How it works" id="s-arch-6">
+        <h2>Connecting website to your cloud</h2>
+        <p class="subtitle">
+          After deploy, settings sync automatically so the website calls <strong>your</strong>
+          back office and login — not a manual copy-paste from the cloud console.
+        </p>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+flowchart LR
+  Deploy[Team deploys cloud stack] --> Script[Automatic settings sync]
+  Script --> SiteConfig[Website configuration]
+  SiteConfig --> Site[Website knows where to call]
+          </pre>
+        </div>
+        <dl class="glossary">
+          <dt>Website</dt>
+          <dd>What you see and click</dd>
+          <dt>Back office</dt>
+          <dd>Cloud programs that answer requests</dd>
+          <dt>Account service</dt>
+          <dd>Sign-in and passwords</dd>
+          <dt>Photo catalog</dt>
+          <dd>Captions and who owns each photo</dd>
+          <dt>Photo locker</dt>
+          <dd>Where the image files live</dd>
+        </dl>
+        <span class="slide-number">8</span>
+      </section>
+
       <!-- 3 -->
       <section class="slide" data-chapter="Cursor" id="s3">
         <h2>What is Cursor?</h2>
@@ -534,7 +868,7 @@
           <span><span class="badge badge-speed-fast">Fast</span> first reply had the fix</span>
           <span><span class="badge badge-speed-moderate">Moderate</span> a few back-and-forths</span>
         </div>
-        <span class="slide-number">3</span>
+        <span class="slide-number">9</span>
       </section>
 
       <!-- 4 -->
@@ -572,7 +906,7 @@
             removal could complete). Useful for cleanup or starting fresh.
           </p>
         </div>
-        <span class="slide-number">4</span>
+        <span class="slide-number">10</span>
       </section>
 
       <!-- 5 -->
@@ -591,7 +925,7 @@
             sign-in → merge journey visually.
           </p>
         </div>
-        <span class="slide-number">5</span>
+        <span class="slide-number">11</span>
       </section>
 
       <!-- 6 -->
@@ -630,7 +964,7 @@ use yarn workspaces and latest version of yearn possile</div>
             documentation matched reality.
           </p>
         </div>
-        <span class="slide-number">6</span>
+        <span class="slide-number">12</span>
       </section>
 
       <!-- 7 -->
@@ -647,7 +981,7 @@ use yarn workspaces and latest version of yearn possile</div>
             pages.
           </p>
         </div>
-        <span class="slide-number">7</span>
+        <span class="slide-number">13</span>
       </section>
 
       <!-- 8 -->
@@ -686,7 +1020,7 @@ use yarn workspaces and latest version of yearn possile</div>
             sequence diagram — without cluttering config files.
           </p>
         </div>
-        <span class="slide-number">8</span>
+        <span class="slide-number">14</span>
       </section>
 
       <!-- 9 -->
@@ -708,7 +1042,7 @@ use yarn workspaces and latest version of yearn possile</div>
             <p>See README.md in the repository for stack details, curl examples, and architecture diagrams</p>
           </div>
         </div>
-        <span class="slide-number">9</span>
+        <span class="slide-number">15</span>
       </section>
 
       <!-- 10 Stephen · Bootstrap -->
@@ -774,7 +1108,7 @@ walk me through step by step</div>
             </p>
           </div>
         </div>
-        <span class="slide-number">10</span>
+        <span class="slide-number">16</span>
       </section>
 
       <!-- 11 Stephen · Features -->
@@ -846,7 +1180,7 @@ walk me through step by step</div>
             </p>
           </div>
         </div>
-        <span class="slide-number">11</span>
+        <span class="slide-number">17</span>
       </section>
 
       <!-- 12 Stephen · Learning -->
@@ -918,7 +1252,7 @@ walk me through step by step</div>
             </p>
           </div>
         </div>
-        <span class="slide-number">12</span>
+        <span class="slide-number">18</span>
       </section>
 
       <!-- 13 Stephen · Ops -->
@@ -1004,7 +1338,7 @@ walk me through step by step</div>
             </p>
           </div>
         </div>
-        <span class="slide-number">13</span>
+        <span class="slide-number">19</span>
       </section>
 
       <!-- 14 Compare -->
@@ -1039,7 +1373,7 @@ walk me through step by step</div>
             </p>
           </div>
         </div>
-        <span class="slide-number">14</span>
+        <span class="slide-number">20</span>
       </section>
 
       <!-- 15 End -->
@@ -1053,10 +1387,11 @@ walk me through step by step</div>
           Open this file locally: double-click
           <code>docs/cursor-prompts-presentation.html</code> or drag it into any browser.
         </p>
-        <span class="slide-number">15</span>
+        <span class="slide-number">21</span>
       </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
     <script>
       (function () {
         const deck = document.getElementById("deck");
@@ -1124,6 +1459,65 @@ walk me through step by step</div>
         });
 
         setActive(0);
+
+        if (typeof mermaid !== "undefined") {
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: "dark",
+            securityLevel: "loose",
+            flowchart: { htmlLabels: true, curve: "basis" },
+            themeVariables: {
+              primaryColor: "#1a2332",
+              primaryTextColor: "#e8edf4",
+              primaryBorderColor: "#38bdf8",
+              lineColor: "#94a3b8",
+              secondaryColor: "#243044",
+              tertiaryColor: "#0c1220",
+              noteBkgColor: "#243044",
+              noteTextColor: "#e8edf4",
+              actorBkg: "#1a2332",
+              actorTextColor: "#e8edf4",
+              actorLineColor: "#38bdf8",
+              signalColor: "#e8edf4",
+              labelBoxBkgColor: "#1a2332",
+              labelBoxBorderColor: "#38bdf8",
+              labelTextColor: "#e8edf4",
+            },
+          });
+
+          const diagramSlides = slides.filter((s) =>
+            s.querySelector(".mermaid")
+          );
+          const rendered = new WeakSet();
+
+          async function renderDiagrams(slide) {
+            const nodes = [...slide.querySelectorAll(".mermaid")].filter(
+              (n) => !rendered.has(n)
+            );
+            if (!nodes.length) return;
+            try {
+              await mermaid.run({ nodes });
+              nodes.forEach((n) => rendered.add(n));
+            } catch (err) {
+              console.warn("Mermaid render failed:", err);
+            }
+          }
+
+          const diagramObserver = new IntersectionObserver(
+            (entries) => {
+              entries.forEach((entry) => {
+                if (entry.isIntersecting) {
+                  renderDiagrams(entry.target);
+                }
+              });
+            },
+            { root: deck, threshold: 0.35 }
+          );
+
+          diagramSlides.forEach((s) => diagramObserver.observe(s));
+          const firstDiagram = diagramSlides[0];
+          if (firstDiagram) renderDiagrams(firstDiagram);
+        }
       })();
     </script>
   </body>

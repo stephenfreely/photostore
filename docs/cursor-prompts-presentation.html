@@ -285,6 +285,94 @@
         font-style: italic;
       }
 
+      /* Complexity & speed badges */
+      .prompt-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin: 0.35rem 0 0.75rem;
+        font-family: var(--font);
+      }
+
+      .badge {
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 0.25rem 0.65rem;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+      }
+
+      .badge-complexity-low {
+        background: rgba(74, 222, 128, 0.12);
+        color: var(--success);
+        border-color: rgba(74, 222, 128, 0.35);
+      }
+
+      .badge-complexity-medium {
+        background: rgba(56, 189, 248, 0.12);
+        color: var(--accent);
+        border-color: rgba(56, 189, 248, 0.35);
+      }
+
+      .badge-complexity-high {
+        background: rgba(251, 191, 36, 0.12);
+        color: #fbbf24;
+        border-color: rgba(251, 191, 36, 0.35);
+      }
+
+      .badge-complexity-very-high {
+        background: rgba(248, 113, 113, 0.12);
+        color: #f87171;
+        border-color: rgba(248, 113, 113, 0.35);
+      }
+
+      .badge-speed-instant,
+      .badge-speed-fast {
+        background: rgba(74, 222, 128, 0.1);
+        color: var(--success);
+        border-color: rgba(74, 222, 128, 0.3);
+      }
+
+      .badge-speed-moderate {
+        background: rgba(167, 139, 250, 0.12);
+        color: var(--accent-2);
+        border-color: rgba(167, 139, 250, 0.35);
+      }
+
+      .badge-speed-multi {
+        background: rgba(148, 163, 184, 0.12);
+        color: var(--muted);
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin: 1rem 0 1.5rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+
+      .prompt-block {
+        margin-bottom: 1.75rem;
+        padding-bottom: 1.5rem;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .prompt-block:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+      }
+
       .authors {
         display: flex;
         gap: 1rem;
@@ -377,7 +465,7 @@
         </p>
         <div class="authors">
           <span class="author-badge done">Vivek — prompts documented</span>
-          <span class="author-badge pending">Teammate — section ready to fill in</span>
+          <span class="author-badge done">Stephen — prompts documented</span>
         </div>
         <span class="slide-number">1</span>
       </section>
@@ -433,6 +521,19 @@
           <li><strong>Outcome</strong> — what actually changed (features, docs, fixes)</li>
           <li><strong>Iteration</strong> — follow-up prompts refine the result (like editing a draft)</li>
         </ul>
+        <p class="subtitle" style="margin-top: 1.25rem">
+          Later slides tag each prompt with <strong>complexity</strong> (how much the
+          codebase / AWS surface was involved) and <strong>Cursor speed</strong> (how
+          quickly a usable answer or change landed).
+        </p>
+        <div class="legend">
+          <span><span class="badge badge-complexity-low">Low</span> explain one idea</span>
+          <span><span class="badge badge-complexity-medium">Medium</span> one area, few files</span>
+          <span><span class="badge badge-complexity-high">High</span> API + infra + docs</span>
+          <span><span class="badge badge-complexity-very-high">Very high</span> greenfield / full lesson step</span>
+          <span><span class="badge badge-speed-fast">Fast</span> first reply had the fix</span>
+          <span><span class="badge badge-speed-moderate">Moderate</span> a few back-and-forths</span>
+        </div>
         <span class="slide-number">3</span>
       </section>
 
@@ -610,41 +711,339 @@ use yarn workspaces and latest version of yearn possile</div>
         <span class="slide-number">9</span>
       </section>
 
-      <!-- 10 Teammate placeholder -->
-      <section class="slide" data-chapter="Teammate" id="s10">
-        <h2>Your teammate's prompts</h2>
-        <p class="lead">
-          This section is reserved for the second author. Copy the same pattern: prompt →
-          what happened in plain English.
-        </p>
+      <!-- 10 Stephen · Bootstrap -->
+      <section class="slide" data-chapter="Stephen · Start" id="s10">
+        <h2>Stephen's prompts — Starting the project</h2>
+        <p class="subtitle">From zero AWS knowledge to a deployable Serverless + TypeScript API.</p>
 
-        <div class="placeholder-section" id="teammate-prompts">
-          <h3>Prompt 1 — add title & text here</h3>
+        <div class="prompt-block">
           <div class="prompt-label">Prompt</div>
-          <div class="prompt" contenteditable="true">[ Teammate: paste your Cursor prompt here ]</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-very-high">Complexity · Very high</span>
+            <span class="badge badge-speed-fast">Cursor · Fast (first reply scaffolded the stack)</span>
+          </div>
+          <div class="prompt">I would like to create a simple backend infra so i can learn aws — that uses aws serverless framework
+its an app that users can upload photos with captions
+
+it must have dynamo db
+use typescript
+and use lambdas
+
+i do not have an aws account
+
+walk me through step by step</div>
           <div class="outcome">
             <strong>What happened</strong>
-            <p contenteditable="true">[ Teammate: describe the outcome in plain language ]</p>
+            <p>
+              Cursor outlined AWS account setup, then generated the first Serverless project:
+              DynamoDB, S3, Lambdas, and a step-by-step README learning path — without needing
+              Stephen to name every file upfront.
+            </p>
           </div>
+        </div>
 
-          <h3 style="margin-top: 2rem">Prompt 2 — duplicate this block as needed</h3>
+        <div class="prompt-block">
           <div class="prompt-label">Prompt</div>
-          <div class="prompt" contenteditable="true">[ Second prompt ]</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-medium">Complexity · Medium</span>
+            <span class="badge badge-speed-fast">Cursor · Fast</span>
+          </div>
+          <div class="prompt">what is the next step in the lesson now</div>
           <div class="outcome">
             <strong>What happened</strong>
-            <p contenteditable="true">[ Outcome ]</p>
+            <p>
+              Read the repo and README, identified completed lesson steps, and pointed to the
+              next one (e.g. TypeScript + esbuild, then DynamoDB).
+            </p>
           </div>
+        </div>
 
-          <p class="add-prompt-hint">
-            Tip: In the browser you can click the gray boxes above and type directly, or edit
-            this HTML file under <code>docs/cursor-prompts-presentation.html</code>.
-          </p>
+        <div class="prompt-block">
+          <div class="prompt-label">Follow-up</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-high">Complexity · High</span>
+            <span class="badge badge-speed-fast">Cursor · Fast (implemented in one session)</span>
+          </div>
+          <div class="prompt">yes implement this step · next step pls · please implement this and update the readme</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Repeated pattern: each “next step” became real code — TypeScript handlers, DynamoDB
+              table + IAM, S3 presigned uploads, Cognito + JWT authorizer, Zod validation, JSDoc —
+              with README diagrams and curl examples updated each time.
+            </p>
+          </div>
         </div>
         <span class="slide-number">10</span>
       </section>
 
-      <!-- 11 -->
-      <section class="slide" data-chapter="End" id="s11">
+      <!-- 11 Stephen · Features -->
+      <section class="slide" data-chapter="Stephen · Features" id="s11">
+        <h2>Stephen's prompts — Features & React client</h2>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-high">Complexity · High</span>
+            <span class="badge badge-speed-fast">Cursor · Fast</span>
+          </div>
+          <div class="prompt">currently the api for photo list just returns this schema … if i wanted it to send me a url of the photo so my client can render it, how can this be done, can you do it and update the readme docs</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Added presigned GET <code>imageUrl</code> on <code>GET /photos</code>, IAM
+              <code>s3:GetObject</code>, S3 CORS for GET, and a full README section with React
+              gallery snippet — in one pass.
+            </p>
+          </div>
+        </div>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-medium">Complexity · Medium</span>
+            <span class="badge badge-speed-instant">Cursor · Instant (explanation only)</span>
+          </div>
+          <div class="prompt">does the client do anything for this imageUrl — presigned HTTPS GET URL (valid 1 hour)</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Clarified: JWT only on the API list call; the browser uses <code>imageUrl</code>
+              like any HTTPS link until it expires, then refresh the list.
+            </p>
+          </div>
+        </div>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-medium">Complexity · Medium</span>
+            <span class="badge badge-speed-fast">Cursor · Fast</span>
+          </div>
+          <div class="prompt">i would like to create a simple client react app to consume this infra, what do i need to get from aws in order to get the client working</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Listed required deploy outputs (API URL, Cognito User Pool + Client, region) and
+              how to wire them into a Vite/React app with Amplify.
+            </p>
+          </div>
+        </div>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-low">Complexity · Low</span>
+            <span class="badge badge-speed-instant">Cursor · Instant (~30 sec)</span>
+          </div>
+          <div class="prompt">can you get the deployed aws values and update my vite so i can run the client</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Ran <code>yarn env:sync</code>, pulled CloudFormation outputs into
+              <code>packages/client/.env</code>, verified the client build — no manual copy-paste
+              from the AWS console.
+            </p>
+          </div>
+        </div>
+        <span class="slide-number">11</span>
+      </section>
+
+      <!-- 12 Stephen · Learning -->
+      <section class="slide" data-chapter="Stephen · Learn" id="s12">
+        <h2>Stephen's prompts — Learning & documentation</h2>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-low">Complexity · Low</span>
+            <span class="badge badge-speed-instant">Cursor · Instant</span>
+          </div>
+          <div class="prompt">how does the image uploading work in terms of storage — we store in dynamoDB which is the reference of what? then we upload it to s3</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Explained metadata vs bytes: DynamoDB holds <code>photoId</code>, <code>s3Key</code>,
+              caption; S3 holds the actual image; presigned URLs move bytes without proxying
+              through Lambda.
+            </p>
+          </div>
+        </div>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-low">Complexity · Low</span>
+            <span class="badge badge-speed-fast">Cursor · Fast</span>
+          </div>
+          <div class="prompt">explain this function to me … how does it get the imageUrl by user</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Walked through <code>list</code>: JWT → ownerId → DynamoDB query → presigned URL
+              per row — tied to the exact lines in <code>photos.ts</code>.
+            </p>
+          </div>
+        </div>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-medium">Complexity · Medium</span>
+            <span class="badge badge-speed-moderate">Cursor · Moderate (several README passes)</span>
+          </div>
+          <div class="prompt">i am getting Unable to render rich display in the readme on the browser, can you fix · none of the links in the readme go to the correct section · please add the definitions of all the aws services</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Fixed Mermaid rendering on GitHub, anchor links, AWS service glossaries in context,
+              Cognito/JWT tables, and folded Q&amp;A from the chat into the README for future
+              readers.
+            </p>
+          </div>
+        </div>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-medium">Complexity · Medium</span>
+            <span class="badge badge-speed-fast">Cursor · Fast</span>
+          </div>
+          <div class="prompt">@src/handlers/guestPhotos.ts update all functions with jsdoc/tsdoc and comments … for long functions, inline comments for all functions in this repo</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Added teaching-oriented comments across handlers and helpers so the codebase
+              doubles as study material — not just production code.
+            </p>
+          </div>
+        </div>
+        <span class="slide-number">12</span>
+      </section>
+
+      <!-- 13 Stephen · Ops -->
+      <section class="slide" data-chapter="Stephen · Ops" id="s13">
+        <h2>Stephen's prompts — Structure, CI/CD & collaboration</h2>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-high">Complexity · High</span>
+            <span class="badge badge-speed-fast">Cursor · Fast</span>
+          </div>
+          <div class="prompt">at the moment the helper modules live in the same level as the lambda handlers. Can we separate them out into a utils folder? … i would like to get a good folder structure to plan for the growth of this project</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Reorganized into <code>handlers/</code>, <code>clients/</code>, shared libs, and a
+              layout that scales as more routes and domains are added.
+            </p>
+          </div>
+        </div>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-medium">Complexity · Medium</span>
+            <span class="badge badge-speed-fast">Cursor · Fast</span>
+          </div>
+          <div class="prompt">there are two collabs, my colleague is the root user of the aws account, can both of us deploy from our machines</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Explained IAM users/roles vs sharing root credentials — how two developers can
+              deploy safely to the same account.
+            </p>
+          </div>
+        </div>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-low">Complexity · Low</span>
+            <span class="badge badge-speed-instant">Cursor · Instant</span>
+          </div>
+          <div class="prompt">error … packageManager yarn@4.15.0 … current global version of Yarn is 1.22.22</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Pointed to Corepack / the repo’s Yarn 4 setup so installs match the monorepo
+              without changing global Yarn 1.
+            </p>
+          </div>
+        </div>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-high">Complexity · High</span>
+            <span class="badge badge-speed-moderate">Cursor · Moderate</span>
+          </div>
+          <div class="prompt">can i improve ci cd? · can i debug endpoints using cloud watch</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Reviewed GitHub Actions workflows and suggested improvements; documented how to
+              use CloudWatch logs to trace API Gateway → Lambda failures.
+            </p>
+          </div>
+        </div>
+
+        <div class="prompt-block">
+          <div class="prompt-label">Prompt</div>
+          <div class="prompt-meta">
+            <span class="badge badge-complexity-medium">Complexity · Medium</span>
+            <span class="badge badge-speed-fast">Cursor · Fast</span>
+          </div>
+          <div class="prompt">when i try to deploy i get … Outputs member must evaluate to a String and not a Map</div>
+          <div class="outcome">
+            <strong>What happened</strong>
+            <p>
+              Found duplicate/invalid CloudFormation outputs in <code>serverless.yml</code>,
+              fixed the template, and deploy succeeded.
+            </p>
+          </div>
+        </div>
+        <span class="slide-number">13</span>
+      </section>
+
+      <!-- 14 Compare -->
+      <section class="slide" data-chapter="Compare" id="s14">
+        <h2>Stephen vs Vivek — complexity & speed</h2>
+        <p class="lead">
+          Both authors used outcome-focused English. Cursor was fastest on
+          <strong>explanations</strong> and <strong>env sync</strong>; highest-complexity prompts
+          still got working code in the first session.
+        </p>
+        <div class="grid-2">
+          <div class="card">
+            <h4>Stephen — typical pattern</h4>
+            <p>
+              <span class="badge badge-complexity-very-high">Very high</span> greenfield + lesson
+              steps · <span class="badge badge-speed-fast">Fast</span> full step implementations<br /><br />
+              <span class="badge badge-complexity-low">Low</span> “explain X” ·
+              <span class="badge badge-speed-instant">Instant</span> prose answers<br /><br />
+              <span class="badge badge-complexity-high">High</span> presigned URLs, folder
+              restructure · <span class="badge badge-speed-fast">Fast</span> code + README together
+            </p>
+          </div>
+          <div class="card">
+            <h4>Vivek — typical pattern</h4>
+            <p>
+              <span class="badge badge-complexity-high">High</span> deploy whole stack ·
+              <span class="badge badge-speed-moderate">Moderate</span> multi-step AWS walkthrough<br /><br />
+              <span class="badge badge-complexity-high">High</span> monorepo migration ·
+              <span class="badge badge-speed-moderate">Moderate</span> many files touched<br /><br />
+              <span class="badge badge-complexity-medium">Medium</span> “add cloudwatch” ·
+              <span class="badge badge-speed-fast">Fast</span> targeted infra edits
+            </p>
+          </div>
+        </div>
+        <span class="slide-number">14</span>
+      </section>
+
+      <!-- 15 End -->
+      <section class="slide" data-chapter="End" id="s15">
         <h1>Questions?</h1>
         <p class="subtitle">
           PhotoStore shows that a small team can ship AWS-backed features by steering an AI
@@ -654,7 +1053,7 @@ use yarn workspaces and latest version of yearn possile</div>
           Open this file locally: double-click
           <code>docs/cursor-prompts-presentation.html</code> or drag it into any browser.
         </p>
-        <span class="slide-number">11</span>
+        <span class="slide-number">15</span>
       </section>
     </main>
 

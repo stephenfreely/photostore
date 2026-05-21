@@ -23,7 +23,7 @@ function parseApiErrorBody(text: string, fallback: string): string {
 }
 
 export async function authHeaders(json = true): Promise<Record<string, string>> {
-  const session = await fetchAuthSession({ forceRefresh: true });
+  const session = await fetchAuthSession();
   const token = session.tokens?.idToken?.toString();
   if (!token) {
     throw new Error("Not signed in");

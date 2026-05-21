@@ -1,4 +1,4 @@
-import { queryOptions } from "@tanstack/react-query";
+import { type QueryClient, queryOptions } from "@tanstack/react-query";
 import { fetchAuthSession, getCurrentUser } from "aws-amplify/auth";
 
 export const authKeys = {
@@ -28,3 +28,8 @@ export const authSessionQueryOptions = queryOptions({
   queryFn: fetchAuthSessionState,
   retry: false,
 });
+
+/** Refetch Cognito session and update the auth query cache (use after sign-in). */
+export function refreshAuthSession(queryClient: QueryClient): Promise<AuthSession> {
+  return queryClient.fetchQuery(authSessionQueryOptions);
+}

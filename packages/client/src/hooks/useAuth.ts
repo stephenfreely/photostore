@@ -1,3 +1,4 @@
+import { useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   autoSignIn,
@@ -16,7 +17,11 @@ import {
   type SignUpInput,
 } from "aws-amplify/auth";
 import { photoKeys } from "../api/photos";
-import { authKeys, authSessionQueryOptions } from "../lib/authSession";
+import {
+  authKeys,
+  authSessionQueryOptions,
+  refreshAuthSession,
+} from "../lib/authSession";
 import { mergeGuestOnLogin } from "../lib/mergeGuestOnLogin";
 
 export { authKeys };
@@ -26,6 +31,7 @@ export function useAuthSession() {
 }
 
 export function useSignIn() {
+  const router = useRouter();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -37,25 +43,29 @@ export function useSignIn() {
       return output;
     },
     onSuccess: async (output) => {
-      void queryClient.invalidateQueries({ queryKey: authKeys.session });
-      if (output.isSignedIn) {
-        void queryClient.invalidateQueries({ queryKey: photoKeys.all });
+      if (!output.isSignedIn) {
+        return;
       }
+      await refreshAuthSession(queryClient);
+      void queryClient.invalidateQueries({ queryKey: photoKeys.all });
+      await router.navigate({ to: "/", replace: true });
     },
   });
 }
 
 export function useSignOut() {
+  const router = useRouter();
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: () => signOut(),
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.setQueryData(authKeys.session, {
         isAuthenticated: false,
         user: null,
       });
       void queryClient.removeQueries({ queryKey: photoKeys.all });
+      await router.navigate({ to: "/login", replace: true });
     },
   });
 }
@@ -67,6 +77,7 @@ export function useSignUp() {
 }
 
 export function useConfirmSignUp() {
+  const router = useRouter();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -80,9 +91,17 @@ export function useConfirmSignUp() {
       }
       return output;
     },
-    onSuccess: async () => {
-      void queryClient.invalidateQueries({ queryKey: authKeys.session });
+    onSuccess: async (output) => {
+      if (output.nextStep.signUpStep !== "DONE") {
+        return;
+      }
+      const session = await refreshAuthSession(queryClient);
       void queryClient.invalidateQueries({ queryKey: photoKeys.all });
+      if (session.isAuthenticated) {
+        await router.navigate({ to: "/", replace: true });
+      } else {
+        await router.navigate({ to: "/login", replace: true });
+      }
     },
   });
 }

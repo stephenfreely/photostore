@@ -16,7 +16,7 @@ export const Route = createFileRoute("/_guest")({
 
 function GuestLayout() {
   return (
-    <main className="grid">
+    <main className="grid gap-5 md:grid-cols-2 md:items-start">
       <GuestPhotoSection />
       <Outlet />
     </main>

@@ -20,6 +20,16 @@ function formatDeliveryDestination(
   return destination;
 }
 
+const inputClassName =
+  "w-full rounded-lg border border-border-input bg-surface px-3 py-2.5 font-[inherit] text-inherit";
+const labelClassName = "flex flex-col gap-1.5 text-sm text-label";
+const formClassName =
+  "flex flex-col gap-3.5 rounded-xl border border-border bg-surface-elevated p-5";
+const buttonClassName =
+  "cursor-pointer rounded-lg bg-accent px-4 py-2.5 font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-60";
+const linkButtonClassName =
+  "cursor-pointer border-none bg-transparent p-0 font-[inherit] font-medium text-accent underline underline-offset-2";
+
 export function ForgotPasswordForm() {
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("request");
@@ -94,12 +104,12 @@ export function ForgotPasswordForm() {
 
   if (resetDone) {
     return (
-      <div className="card">
-        <h2>Password updated</h2>
-        <p className="success" role="status">
+      <div className={formClassName}>
+        <h2 className="mb-1.5 text-lg leading-tight">Password updated</h2>
+        <p className="m-0 text-sm text-success" role="status">
           Your password has been reset. Sign in with your new password.
         </p>
-        <button type="button" onClick={goToSignIn}>
+        <button type="button" className={buttonClassName} onClick={goToSignIn}>
           Back to sign in
         </button>
       </div>
@@ -108,15 +118,16 @@ export function ForgotPasswordForm() {
 
   if (step === "confirm") {
     return (
-      <form className="card" onSubmit={handleConfirmSubmit}>
-        <h2>Reset password</h2>
-        <p className="muted">
+      <form className={formClassName} onSubmit={handleConfirmSubmit}>
+        <h2 className="mb-1.5 text-lg leading-tight">Reset password</h2>
+        <p className="m-0 text-muted">
           Enter the code sent to {deliveryHint} and choose a new password.
         </p>
 
-        <label>
+        <label className={labelClassName}>
           Confirmation code
           <input
+            className={inputClassName}
             type="text"
             inputMode="numeric"
             autoComplete="one-time-code"
@@ -126,9 +137,10 @@ export function ForgotPasswordForm() {
           />
         </label>
 
-        <label>
+        <label className={labelClassName}>
           New password
           <input
+            className={inputClassName}
             type="password"
             autoComplete="new-password"
             value={newPassword}
@@ -138,9 +150,10 @@ export function ForgotPasswordForm() {
           />
         </label>
 
-        <label>
+        <label className={labelClassName}>
           Confirm new password
           <input
+            className={inputClassName}
             type="password"
             autoComplete="new-password"
             value={confirmPassword}
@@ -151,7 +164,7 @@ export function ForgotPasswordForm() {
         </label>
 
         {(localError || confirmReset.isError) && (
-          <p className="error" role="alert">
+          <p className="m-0 text-sm text-error" role="alert">
             {localError ??
               (confirmReset.error instanceof Error
                 ? confirmReset.error.message
@@ -159,14 +172,14 @@ export function ForgotPasswordForm() {
           </p>
         )}
 
-        <button type="submit" disabled={confirmReset.isPending}>
+        <button type="submit" className={buttonClassName} disabled={confirmReset.isPending}>
           {confirmReset.isPending ? "Updating…" : "Update password"}
         </button>
 
-        <p className="auth-footer muted">
+        <p className="m-0 text-center text-sm text-muted">
           <button
             type="button"
-            className="link"
+            className={linkButtonClassName}
             onClick={() => {
               setStep("request");
               setCode("");
@@ -177,7 +190,7 @@ export function ForgotPasswordForm() {
             Use a different email
           </button>
           {" · "}
-          <button type="button" className="link" onClick={goToSignIn}>
+          <button type="button" className={linkButtonClassName} onClick={goToSignIn}>
             Back to sign in
           </button>
         </p>
@@ -186,15 +199,16 @@ export function ForgotPasswordForm() {
   }
 
   return (
-    <form className="card" onSubmit={handleRequestSubmit}>
-      <h2>Forgot password</h2>
-      <p className="muted">
+    <form className={formClassName} onSubmit={handleRequestSubmit}>
+      <h2 className="mb-1.5 text-lg leading-tight">Forgot password</h2>
+      <p className="m-0 text-muted">
         Enter your account email and we will send a reset code.
       </p>
 
-      <label>
+      <label className={labelClassName}>
         Email
         <input
+          className={inputClassName}
           type="email"
           autoComplete="username"
           value={email}
@@ -204,20 +218,23 @@ export function ForgotPasswordForm() {
       </label>
 
       {resetPassword.isError && (
-        <p className="error" role="alert">
+        <p className="m-0 text-sm text-error" role="alert">
           {resetPassword.error instanceof Error
             ? resetPassword.error.message
             : "Could not send reset code"}
         </p>
       )}
 
-      <button type="submit" disabled={resetPassword.isPending}>
+      <button type="submit" className={buttonClassName} disabled={resetPassword.isPending}>
         {resetPassword.isPending ? "Sending…" : "Send reset code"}
       </button>
 
-      <p className="auth-footer muted">
+      <p className="m-0 text-center text-sm text-muted">
         Remember your password?{" "}
-        <Link to="/login" className="link">
+        <Link
+          to="/login"
+          className="font-medium text-accent underline underline-offset-2"
+        >
           Sign in
         </Link>
       </p>

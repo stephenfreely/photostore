@@ -17,7 +17,7 @@ export const Route = createFileRoute("/")({
 
 function HomePage() {
   return (
-    <main className="grid">
+    <main className="grid gap-5 md:grid-cols-2 md:items-start">
       <PhotoUpload />
       <PhotoGallery />
     </main>
